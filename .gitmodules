@@ -4,10 +4,6 @@
 [submodule "lib/tracy"]
 	path = lib/tracy
 	url = https://github.com/stellar/tracy
-[submodule "lib/spdlog"]
-	path = lib/spdlog
-	url = https://github.com/gabime/spdlog
-	ignore = dirty
 [submodule "src/protocol-next/xdr"]
 	path = src/protocol-next/xdr
 	url = https://github.com/stellar/stellar-xdr
