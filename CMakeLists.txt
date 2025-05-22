@@ -227,42 +227,68 @@ if(LIBSODIUM_PKG_FOUND AND NOT FORCE_INTERNAL_LIBSODIUM)
         INTERFACE_INCLUDE_DIRECTORIES "${LIBSODIUM_PKG_INCLUDE_DIRS}" # Use _DIRS from pkg_check_modules
         INTERFACE_LINK_LIBRARIES "${LIBSODIUM_PKG_LIBRARIES}"         # Use _LIBRARIES from pkg_check_modules
     )
-    set(LIBSODIUM_LIBRARIES libsodium) # Point to the target
-    set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_PKG_INCLUDE_DIRS}) # Keep for reference if needed, but target is preferred
-    message(STATUS "  Using system libsodium. Target 'libsodium' created.")
+    add_library(libsodium INTERFACE IMPORTED)
+    set_target_properties(libsodium PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBSODIUM_PKG_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES "${LIBSODIUM_PKG_LIBRARIES}"
+    )
+    set(LIBSODIUM_LIBRARIES libsodium) # Use the target name
+    set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_PKG_INCLUDE_DIRS}) # For direct variable use if any
+    message(STATUS "  Using system libsodium. Target 'libsodium' (INTERFACE IMPORTED) created.")
 else()
-    # Build libsodium internally using add_subdirectory
+    # Build libsodium internally using ExternalProject_Add
     if(FORCE_INTERNAL_LIBSODIUM)
-        message(STATUS "Forcing internal build of libsodium (lib/libsodium).")
+        message(STATUS "Forcing internal build of libsodium (ExternalProject).")
     elseif(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not found. Building libsodium from source (lib/libsodium).")
+        message(STATUS "pkg-config not found. Building libsodium from source (ExternalProject).")
     else() # LIBSODIUM_PKG_FOUND is false
-        message(STATUS "Libsodium not found via pkg-config or version < 1.0.17. Building from source (lib/libsodium).")
+        message(STATUS "Libsodium not found via pkg-config or version < 1.0.17. Building from source (ExternalProject).")
     endif()
 
-    # Add lib/libsodium as a subdirectory, building in a separate binary directory
-    # This call will define the 'sodium_lib' target from lib/libsodium/CMakeLists.txt
-    add_subdirectory(lib/libsodium ${CMAKE_BINARY_DIR}/libsodium_build)
-    message(STATUS "  Added subdirectory: lib/libsodium (build dir: ${CMAKE_BINARY_DIR}/libsodium_build)")
+    set(LIBSODIUM_EP_INSTALL_DIR ${CMAKE_BINARY_DIR}/libsodium_install)
+    set(LIBSODIUM_EP_INCLUDE_DIR ${LIBSODIUM_EP_INSTALL_DIR}/include)
+    set(LIBSODIUM_EP_LIB_FILE ${LIBSODIUM_EP_INSTALL_DIR}/lib/libsodium.a)
 
-    # Create an INTERFACE library 'libsodium' that links to the static 'sodium_lib'
-    # This provides a consistent 'libsodium' target for other parts of the project to link against.
-    add_library(libsodium INTERFACE)
-    target_link_libraries(libsodium INTERFACE sodium_lib) # sodium_lib is built in the subdirectory
-    # The include directories for consumers are set on sodium_lib in its CMakeLists.txt
-    # (e.g., PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/libsodium/include)
-    # and will be propagated by the INTERFACE link.
-    
-    set(LIBSODIUM_LIBRARIES libsodium) # Point to the interface target
-    # Set LIBSODIUM_INCLUDE_DIRS for any non-target usage, though using the target 'libsodium' is preferred
-    set(LIBSODIUM_INCLUDE_DIRS 
-        "${CMAKE_SOURCE_DIR}/lib/libsodium/src/libsodium/include"  # Public headers
-        "${CMAKE_BINARY_DIR}/libsodium_build"                      # For generated sodium_config.h
+    # Prepare configure command arguments, including CC and CFLAGS if sanitizers are on
+    set(LIBSODIUM_EP_CONFIGURE_ARGS
+        "--disable-shared"
+        "--enable-static"
+        "--prefix=${LIBSODIUM_EP_INSTALL_DIR}"
     )
-    message(STATUS "  Configured internal libsodium build. Target 'libsodium' (INTERFACE to sodium_lib) created.")
+    # Pass C compiler and CFLAGS, especially if sanitizers are enabled,
+    # as ExternalProject might not inherit them perfectly for autotools.
+    list(APPEND LIBSODIUM_EP_CONFIGURE_ARGS "CC=${CMAKE_C_COMPILER}")
+    if(CMAKE_C_FLAGS) # Check if CMAKE_C_FLAGS is set (it includes sanitizer flags)
+      list(APPEND LIBSODIUM_EP_CONFIGURE_ARGS "CFLAGS=${CMAKE_C_FLAGS}")
+    endif()
+    
+    ExternalProject_Add(libsodium_external
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/lib/libsodium
+        CONFIGURE_COMMAND ${CMAKE_SOURCE_DIR}/lib/libsodium/configure ${LIBSODIUM_EP_CONFIGURE_ARGS}
+        BUILD_COMMAND $(MAKE) -j${CMAKE_BUILD_PARALLEL_LEVEL} # Use $(MAKE) for portability
+        INSTALL_COMMAND $(MAKE) install
+        BUILD_BYPRODUCTS ${LIBSODIUM_EP_LIB_FILE}
+    )
+
+    # Create an IMPORTED static library target for the libsodium built by ExternalProject
+    add_library(libsodium_internal_actual_lib STATIC IMPORTED GLOBAL)
+    set_target_properties(libsodium_internal_actual_lib PROPERTIES
+        IMPORTED_LOCATION "${LIBSODIUM_EP_LIB_FILE}"
+    )
+    add_dependencies(libsodium_internal_actual_lib libsodium_external)
+
+    # Create the main 'libsodium' INTERFACE target that links to the internal build
+    add_library(libsodium INTERFACE)
+    target_include_directories(libsodium INTERFACE ${LIBSODIUM_EP_INCLUDE_DIR})
+    target_link_libraries(libsodium INTERFACE libsodium_internal_actual_lib)
+    add_dependencies(libsodium libsodium_internal_actual_lib) # Ensure libsodium depends on the actual build
+
+    set(LIBSODIUM_LIBRARIES libsodium) # Use the interface target name
+    set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_EP_INCLUDE_DIR})
+    message(STATUS "  Configured internal libsodium build (ExternalProject). Target 'libsodium' (INTERFACE) created, linking to libsodium_internal_actual_lib.")
 endif()
 # The target 'libsodium' (either IMPORTED or INTERFACE) is now available.
-# Variables LIBSODIUM_LIBRARIES and LIBSODIUM_INCLUDE_DIRS are set for compatibility or direct use if needed.
+# Variables LIBSODIUM_LIBRARIES and LIBSODIUM_INCLUDE_DIRS are set.
 
 
 # XDRPP (XDRC tool and library)
@@ -1325,14 +1351,45 @@ endif()
 # The add_compile_definitions(MSAN_ENABLED=1) is for the compiler.
 # For config.h.in, we need a CMake variable.
 if(ENABLE_MEMCHECK)
-    set(MSAN_ENABLED 1 CACHE INTERNAL "MemorySanitizer is enabled")
+    set(MSAN_ENABLED 1 CACHE INTERNAL "MemorySanitizer is enabled for config.h")
 else()
-    set(MSAN_ENABLED 0 CACHE INTERNAL "MemorySanitizer is not enabled")
+    set(MSAN_ENABLED 0 CACHE INTERNAL "MemorySanitizer is not enabled for config.h")
 endif()
 
 # HAVE_POSTGRES for config.h (from PostgreSQL client library logic)
-# This variable is set in the Libpq section.
-# No specific 'set' needed here as it's already set to 0 or 1.
+# This variable (HAVE_POSTGRES) is set in the Libpq section (0 or 1).
+# No specific 'set' needed here as it's already set.
+
+# ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION_CONFIG for config.h
+if(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION)
+    set(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION_CONFIG 1 CACHE INTERNAL "Next protocol version enabled for config.h")
+else()
+    set(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION_CONFIG 0 CACHE INTERNAL "Next protocol version not enabled for config.h")
+endif()
+
+# USE_SPDLOG_CONFIG_H for config.h
+if(USE_SPDLOG)
+    set(USE_SPDLOG_CONFIG_H 1 CACHE INTERNAL "spdlog is enabled for config.h")
+else()
+    set(USE_SPDLOG_CONFIG_H 0 CACHE INTERNAL "spdlog is not enabled for config.h")
+endif()
+
+# ENABLE_EXTRA_CHECKS_CONFIG_H for config.h
+if(ENABLE_EXTRA_CHECKS)
+    set(ENABLE_EXTRA_CHECKS_CONFIG_H 1 CACHE INTERNAL "Extra checks are enabled for config.h")
+else()
+    set(ENABLE_EXTRA_CHECKS_CONFIG_H 0 CACHE INTERNAL "Extra checks are not enabled for config.h")
+endif()
+
+# USING_VALGRIND for config.h
+find_program(VALGRIND_EXECUTABLE valgrind QUIET) # QUIET to avoid noise if not found
+if(VALGRIND_EXECUTABLE)
+    set(USING_VALGRIND 1 CACHE INTERNAL "Valgrind executable found, setting USING_VALGRIND for config.h")
+    message(STATUS "  Found valgrind: ${VALGRIND_EXECUTABLE}. USING_VALGRIND will be set in config.h.")
+else()
+    set(USING_VALGRIND 0 CACHE INTERNAL "Valgrind executable not found, USING_VALGRIND will not be set in config.h.")
+    message(STATUS "  Valgrind not found. USING_VALGRIND will not be set in config.h.")
+endif()
 
 # AFL_LLVM_MODE for config.h (from AFL logic)
 # The add_compile_definitions(AFL_LLVM_MODE=1) is for the compiler.
