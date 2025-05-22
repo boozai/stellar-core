@@ -31,12 +31,23 @@ foreach(XDR_FILE_FULL_PATH_CTX ${XDR_FILES_IN_SRC})
     set(XDR_OUTPUT_HEADER_CTX "${XDR_GENERATED_INCLUDE_DIR}/${XDR_FILE_NAME_CTX}.h") # Use global XDR_GENERATED_INCLUDE_DIR
 
     set(XDRC_DEPENDENCY_CTX "")
-    if(FORCE_INTERNAL_XDRPP AND TARGET xdrpp) set(XDRC_DEPENDENCY_CTX xdrpp) endif()
+    # XDRC_EXECUTABLE is set to "xdrc_executable" (a target name) in root if built internally.
+    # Otherwise, it's a path to a system executable.
+    # FORCE_INTERNAL_XDRPP is a good proxy for this.
+    if(FORCE_INTERNAL_XDRPP)
+        if(TARGET xdrc_executable) # Check if the target from lib/xdrpp/CMakeLists.txt exists
+            set(XDRC_DEPENDENCY_CTX xdrc_executable)
+            message(STATUS "      XDRC dependency for ${XDR_FILE_NAME_WITH_EXT_CTX} set to target xdrc_executable.")
+        else()
+            message(WARNING "      FORCE_INTERNAL_XDRPP is ON but target 'xdrc_executable' not found. XDR generation might not have correct dependency for xdrc tool.")
+        endif()
+    endif()
+    # If XDRC_DEPENDENCY_CTX remains empty, the command depends only on the .x file and implicitly on XDRC_EXECUTABLE path being valid.
     
     add_custom_command(
         OUTPUT ${XDR_OUTPUT_HEADER_CTX}
         COMMAND ${XDRC_EXECUTABLE} -hh -pedantic -o ${XDR_OUTPUT_HEADER_CTX} ${XDR_FILE_FULL_PATH_CTX}
-        DEPENDS ${XDR_FILE_FULL_PATH_CTX} ${XDRC_DEPENDENCY_CTX}
+        DEPENDS ${XDR_FILE_FULL_PATH_CTX} ${XDRC_DEPENDENCY_CTX} # XDRC_DEPENDENCY_CTX will be xdrc_executable or empty
         COMMENT "Generating C++ header from ${XDR_FILE_NAME_WITH_EXT_CTX} (src/CMakeLists.txt)" VERBATIM)
     list(APPEND XDR_GENERATED_HEADERS_SRC ${XDR_OUTPUT_HEADER_CTX})
 endforeach()

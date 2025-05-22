@@ -222,50 +222,47 @@ if(LIBSODIUM_PKG_FOUND AND NOT FORCE_INTERNAL_LIBSODIUM)
     message(STATUS "Found libsodium via pkg-config: ${LIBSODIUM_PKG_LIBRARIES} (includes: ${LIBSODIUM_PKG_INCLUDE_DIRS})")
     set(LIBSODIUM_LIBRARIES ${LIBSODIUM_PKG_LIBRARIES})
     set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_PKG_INCLUDE_DIRS})
-    add_library(libsodium INTERFACE IMPORTED)
+    add_library(libsodium INTERFACE IMPORTED) # Using INTERFACE IMPORTED for system library
     set_target_properties(libsodium PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBSODIUM_INCLUDE_DIRS}"
-        INTERFACE_LINK_LIBRARIES "${LIBSODIUM_LIBRARIES}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBSODIUM_PKG_INCLUDE_DIRS}" # Use _DIRS from pkg_check_modules
+        INTERFACE_LINK_LIBRARIES "${LIBSODIUM_PKG_LIBRARIES}"         # Use _LIBRARIES from pkg_check_modules
     )
+    set(LIBSODIUM_LIBRARIES libsodium) # Point to the target
+    set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_PKG_INCLUDE_DIRS}) # Keep for reference if needed, but target is preferred
+    message(STATUS "  Using system libsodium. Target 'libsodium' created.")
 else()
+    # Build libsodium internally using add_subdirectory
     if(FORCE_INTERNAL_LIBSODIUM)
-        message(STATUS "Forcing internal build of libsodium.")
+        message(STATUS "Forcing internal build of libsodium (lib/libsodium).")
     elseif(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not found. Building libsodium from source.")
-    else()
-        message(STATUS "Libsodium not found via pkg-config or version < 1.0.17. Building from source.")
+        message(STATUS "pkg-config not found. Building libsodium from source (lib/libsodium).")
+    else() # LIBSODIUM_PKG_FOUND is false
+        message(STATUS "Libsodium not found via pkg-config or version < 1.0.17. Building from source (lib/libsodium).")
     endif()
 
-    set(LIBSODIUM_INSTALL_DIR ${CMAKE_BINARY_DIR}/libsodium_install)
-    set(LIBSODIUM_SOURCES_DIR ${CMAKE_SOURCE_DIR}/lib/libsodium)
-    set(LIBSODIUM_INCLUDE_DIRS ${LIBSODIUM_INSTALL_DIR}/include)
-    set(LIBSODIUM_LIBRARIES ${LIBSODIUM_INSTALL_DIR}/lib/libsodium.a)
+    # Add lib/libsodium as a subdirectory, building in a separate binary directory
+    # This call will define the 'sodium_lib' target from lib/libsodium/CMakeLists.txt
+    add_subdirectory(lib/libsodium ${CMAKE_BINARY_DIR}/libsodium_build)
+    message(STATUS "  Added subdirectory: lib/libsodium (build dir: ${CMAKE_BINARY_DIR}/libsodium_build)")
 
-    # Pass compiler flags for sanitizers if enabled
-    set(LIBSODIUM_CONFIGURE_FLAGS "")
-    if(SANITIZER_OPTS_STRING) # SANITIZER_OPTS_STRING is like "address", "thread", etc.
-        list(APPEND LIBSODIUM_CONFIGURE_FLAGS "CFLAGS=${CMAKE_C_FLAGS}" "CXXFLAGS=${CMAKE_CXX_FLAGS}")
-    endif()
-
-    ExternalProject_Add(libsodium_external
-        SOURCE_DIR ${LIBSODIUM_SOURCES_DIR}
-        PREFIX ${LIBSODIUM_SOURCES_DIR}/build # Build in a subdir of source to keep it clean
-        CONFIGURE_COMMAND ${LIBSODIUM_SOURCES_DIR}/configure --disable-shared --enable-static --prefix=${LIBSODIUM_INSTALL_DIR} ${LIBSODIUM_CONFIGURE_FLAGS}
-        BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-        INSTALL_COMMAND make install
-        BUILD_BYPRODUCTS ${LIBSODIUM_LIBRARIES}
+    # Create an INTERFACE library 'libsodium' that links to the static 'sodium_lib'
+    # This provides a consistent 'libsodium' target for other parts of the project to link against.
+    add_library(libsodium INTERFACE)
+    target_link_libraries(libsodium INTERFACE sodium_lib) # sodium_lib is built in the subdirectory
+    # The include directories for consumers are set on sodium_lib in its CMakeLists.txt
+    # (e.g., PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/libsodium/include)
+    # and will be propagated by the INTERFACE link.
+    
+    set(LIBSODIUM_LIBRARIES libsodium) # Point to the interface target
+    # Set LIBSODIUM_INCLUDE_DIRS for any non-target usage, though using the target 'libsodium' is preferred
+    set(LIBSODIUM_INCLUDE_DIRS 
+        "${CMAKE_SOURCE_DIR}/lib/libsodium/src/libsodium/include"  # Public headers
+        "${CMAKE_BINARY_DIR}/libsodium_build"                      # For generated sodium_config.h
     )
-
-    add_library(libsodium STATIC IMPORTED)
-    set_target_properties(libsodium PROPERTIES
-        IMPORTED_LOCATION "${LIBSODIUM_LIBRARIES}"
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBSODIUM_INCLUDE_DIRS}"
-    )
-    add_dependencies(libsodium libsodium_external) # libsodium target depends on the external build
-    message(STATUS "Configured internal libsodium build (Install dir: ${LIBSODIUM_INSTALL_DIR})")
+    message(STATUS "  Configured internal libsodium build. Target 'libsodium' (INTERFACE to sodium_lib) created.")
 endif()
-# Ensure other targets can find libsodium headers and libraries
-# Using an interface library 'libsodium' which is either IMPORTED (pkg-config) or STATIC IMPORTED (internal build)
+# The target 'libsodium' (either IMPORTED or INTERFACE) is now available.
+# Variables LIBSODIUM_LIBRARIES and LIBSODIUM_INCLUDE_DIRS are set for compatibility or direct use if needed.
 
 
 # XDRPP (XDRC tool and library)
@@ -306,47 +303,53 @@ if(XDRPP_FOUND_PKGCONFIG AND XDRC_FOUND_PROGRAM AND NOT FORCE_INTERNAL_XDRPP)
     )
     # xdrc is just an executable, not a library target to link against directly.
     # XDRC_EXECUTABLE variable will be used in custom commands.
+    # xdrpp INTERFACE IMPORTED target is already set up.
 else()
+    # Build xdrpp internally using add_subdirectory
     if(FORCE_INTERNAL_XDRPP)
         message(STATUS "Forcing internal build of xdrpp.")
     elseif(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not found. Building xdrpp from source.")
+        message(STATUS "pkg-config not found. Building xdrpp from source (lib/xdrpp).")
     elseif(NOT XDRPP_FOUND_PKGCONFIG)
-        message(STATUS "xdrpp library not found via pkg-config. Building from source.")
+        message(STATUS "xdrpp library not found via pkg-config. Building from source (lib/xdrpp).")
     elseif(NOT XDRC_FOUND_PROGRAM)
-        message(STATUS "xdrc executable not found. Building xdrpp from source.")
+        message(STATUS "xdrc executable not found. Building xdrpp from source (lib/xdrpp).")
     endif()
 
-    set(XDRPP_INSTALL_DIR ${CMAKE_BINARY_DIR}/xdrpp_install)
-    set(XDRPP_SOURCES_DIR ${CMAKE_SOURCE_DIR}/lib/xdrpp)
-    set(XDRPP_INCLUDE_DIRS ${XDRPP_INSTALL_DIR}/include)
-    set(XDRPP_LIBRARIES ${XDRPP_INSTALL_DIR}/lib/libxdrpp.a) # Assuming static library
-    set(XDRC_EXECUTABLE ${XDRPP_INSTALL_DIR}/bin/xdrc)
+    # Add lib/xdrpp as a subdirectory, building in a separate binary directory
+    # This call will define targets like xdrpp_lib and xdrc_executable
+    add_subdirectory(lib/xdrpp ${CMAKE_BINARY_DIR}/xdrpp_build)
+    message(STATUS "  Added subdirectory: lib/xdrpp (build dir: ${CMAKE_BINARY_DIR}/xdrpp_build)")
 
-    # Pass compiler flags for sanitizers if enabled
-    set(XDRPP_CONFIGURE_FLAGS "")
-    if(SANITIZER_OPTS_STRING)
-        list(APPEND XDRPP_CONFIGURE_FLAGS "CFLAGS=${CMAKE_C_FLAGS}" "CXXFLAGS=${CMAKE_CXX_FLAGS}")
-    endif()
-
-    ExternalProject_Add(xdrpp_external
-        SOURCE_DIR ${XDRPP_SOURCES_DIR}
-        PREFIX ${XDRPP_SOURCES_DIR}/build # Build in a subdir of source
-        CONFIGURE_COMMAND ${XDRPP_SOURCES_DIR}/configure --disable-shared --enable-static --prefix=${XDRPP_INSTALL_DIR} ${XDRPP_CONFIGURE_FLAGS}
-        BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-        INSTALL_COMMAND make install
-        BUILD_BYPRODUCTS ${XDRPP_LIBRARIES} ${XDRC_EXECUTABLE} # Ensure both lib and tool are built
+    # Define variables to point to the targets/paths from the subdirectory build
+    # The xdrpp_lib target itself can be used directly in target_link_libraries.
+    # For include directories, xdrpp_lib should have its INTERFACE_INCLUDE_DIRECTORIES set.
+    set(XDRPP_LIBRARIES xdrpp_lib) # This is the target name from lib/xdrpp/CMakeLists.txt
+    # XDRPP_INCLUDE_DIRS should be handled by xdrpp_lib's INTERFACE_INCLUDE_DIRECTORIES.
+    # It typically includes ${CMAKE_SOURCE_DIR}/lib/xdrpp and ${CMAKE_BINARY_DIR}/xdrpp_build/xdrpp (for build_endian.h)
+    # We can set XDRPP_INCLUDE_DIRS for other parts of the build if needed, or rely on the target.
+    set(XDRPP_INCLUDE_DIRS
+        "${CMAKE_SOURCE_DIR}/lib/xdrpp" # Source headers
+        "${CMAKE_BINARY_DIR}/xdrpp_build/xdrpp" # Generated build_endian.h
     )
-
-    add_library(xdrpp STATIC IMPORTED)
-    set_target_properties(xdrpp PROPERTIES
-        IMPORTED_LOCATION "${XDRPP_LIBRARIES}"
-        INTERFACE_INCLUDE_DIRECTORIES "${XDRPP_INCLUDE_DIRS}"
-    )
-    add_dependencies(xdrpp xdrpp_external)
-    message(STATUS "Configured internal xdrpp build (Install dir: ${XDRPP_INSTALL_DIR}, XDRC: ${XDRC_EXECUTABLE})")
+    # XDRC_EXECUTABLE should point to the xdrc_executable target. CMake handles path resolution.
+    set(XDRC_EXECUTABLE xdrc_executable) # This is the target name from lib/xdrpp/CMakeLists.txt
+    
+    # Create an interface library 'xdrpp' to mirror the pkg-config case,
+    # linking to the static library xdrpp_lib and propagating its include directories.
+    add_library(xdrpp INTERFACE)
+    target_link_libraries(xdrpp INTERFACE xdrpp_lib)
+    # The include directories should be correctly set on xdrpp_lib via target_include_directories
+    # with PUBLIC or INTERFACE visibility for what needs to be propagated.
+    # In lib/xdrpp/CMakeLists.txt, xdrpp_lib has:
+    # PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> (which becomes lib/xdrpp)
+    # PUBLIC $<INSTALL_INTERFACE:include>
+    # PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}> (which becomes xdrpp_build/xdrpp for build_endian.h)
+    # So linking against xdrpp_lib (or the xdrpp interface target) should make these available.
+    
+    message(STATUS "Configured internal xdrpp build using add_subdirectory. XDRPP_LIBRARIES=${XDRPP_LIBRARIES}, XDRC_EXECUTABLE=${XDRC_EXECUTABLE}")
 endif()
-# XDRPP_LIBRARIES, XDRPP_INCLUDE_DIRS, and XDRC_EXECUTABLE are now set.
+# XDRPP_LIBRARIES (target or pkg-config list), XDRPP_INCLUDE_DIRS (list or from target), and XDRC_EXECUTABLE (target or path) are now set.
 
 # The following libraries are now defined in lib/CMakeLists.txt
 # - LibASIO (asio_interface, asio_static_lib)
