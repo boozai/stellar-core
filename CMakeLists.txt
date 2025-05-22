@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(stellar-core LANGUAGES CXX)
 
+enable_testing() # Initialize CTest
+
+include(GNUInstallDirs) # For CMAKE_INSTALL_BINDIR, CMAKE_INSTALL_DATADIR, etc.
 include(ExternalProject)
 find_package(PkgConfig QUIET)
 if(NOT PkgConfig_FOUND)
@@ -345,252 +348,15 @@ else()
 endif()
 # XDRPP_LIBRARIES, XDRPP_INCLUDE_DIRS, and XDRC_EXECUTABLE are now set.
 
+# The following libraries are now defined in lib/CMakeLists.txt
+# - LibASIO (asio_interface, asio_static_lib)
+# - SOCI (soci_lib, soci_interface)
+# - Libmedida (medida_lib, medida_interface)
+# - Libpq (PostgreSQL::libpq) - Note: Libpq part is still here, SOCI depends on it.
+# - lib3rdparty_a
+# - SQLite (sqlite3_lib)
 
-# LibASIO
-# Asio is mostly header-only, but stellar-core uses it with ASIO_SEPARATE_COMPILATION.
-# This requires compiling lib/asio.cpp and linking it.
-message(STATUS "Configuring Asio...")
-add_library(asio_interface INTERFACE)
-target_include_directories(asio_interface INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/asio/asio/include
-)
-target_compile_definitions(asio_interface INTERFACE
-    ASIO_SEPARATE_COMPILATION
-    ASIO_STANDALONE
-)
-
-# Check if lib/asio.cpp exists. If not, it might indicate an issue with submodule checkout or file structure.
-set(ASIO_CPP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/lib/asio.cpp)
-if(NOT EXISTS ${ASIO_CPP_FILE})
-    message(FATAL_ERROR "Asio source file ${ASIO_CPP_FILE} not found. Check submodule status or file path.")
-endif()
-
-add_library(asio_static_lib STATIC ${ASIO_CPP_FILE})
-# Link the compiled part to the interface.
-# Targets that use Asio should link to asio_interface.
-target_link_libraries(asio_static_lib PUBLIC asio_interface) # PUBLIC so users of asio_static_lib get interface props
-# However, the typical pattern is to link the static lib privately to the interface,
-# and then other targets link to the interface. Let's adjust this.
-# target_link_libraries(asio_interface INTERFACE asio_static_lib) - No, this is for linking *to* an interface.
-
-# Correct pattern: The interface library exposes the include dirs and defines.
-# A separate compiled library provides the symbols. Targets link to *both* or to an
-# aggregate library if one were made. Or, more simply, the compiled lib *uses* the interface.
-# The instructions suggest linking asio_static_lib to asio_interface (privately).
-# This means asio_static_lib gets the compile defs from asio_interface.
-# And then other targets would link to asio_static_lib (which brings asio_interface's usage requirements).
-
-# Let's re-evaluate:
-# 1. asio_interface: INTERFACE_INCLUDE_DIRECTORIES, INTERFACE_COMPILE_DEFINITIONS.
-# 2. asio_static_lib: Source file. This library *needs* the definitions from asio_interface.
-# So, asio_static_lib should link to asio_interface.
-# Then, other targets link to asio_static_lib.
-
-# Resetting asio_static_lib to link to asio_interface correctly.
-# The previous target_link_libraries for asio_static_lib was okay.
-# Let's keep it simple: other targets will link to asio_static_lib.
-# asio_static_lib itself needs the include dirs to find asio headers for asio.cpp
-target_include_directories(asio_static_lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/asio/asio/include)
-target_compile_definitions(asio_static_lib PRIVATE ASIO_SEPARATE_COMPILATION ASIO_STANDALONE)
-
-
-# The request was: Link asio_static_lib to asio_interface (privately)
-# This is a bit unusual. It usually means asio_static_lib uses asio_interface.
-# Let's try to make asio_static_lib an alias or also an interface for downstream.
-# The goal is that users link to one thing.
-# Perhaps the intent was:
-# add_library(asio INTERFACE)
-# target_link_libraries(asio INTERFACE asio_interface asio_static_lib)
-# This is not quite right.
-
-# Simpler approach:
-# `asio_interface` provides the compile definitions and include directories.
-# `asio_static_lib` provides the compiled symbols.
-# Targets that need Asio should link against `asio_static_lib` AND `asio_interface`.
-# Or, we can make `asio_static_lib` also propagate the interface properties.
-
-# Let's stick to the request: "Link asio_static_lib to asio_interface (privately)"
-# This means asio_static_lib uses the definitions from asio_interface.
-# And then dependent targets link to asio_static_lib.
-# target_link_libraries(asio_static_lib PRIVATE asio_interface)
-# This is effectively what target_compile_definitions and target_include_directories on asio_static_lib does.
-
-# The most common way to handle this pattern (header-only lib + one .cpp file):
-# Create a library (static or shared) from the .cpp file.
-# This library has include_directories for the headers.
-# This library has compile_definitions needed by the .cpp and headers.
-# Other targets link to this library.
-
-# Let's make `asio_static_lib` the main target to link against.
-# It will have the source file and the necessary interface properties.
-# Removing `asio_interface` and putting all properties on `asio_static_lib`.
-# This simplifies it to one target `asio_static_lib` for users.
-# The request was to "Create an interface library target asio_interface" and "Link asio_static_lib to asio_interface (privately)"
-# This implies asio_interface is for users, and asio_static_lib is an implementation detail.
-# So, users link to `asio_interface`. `asio_interface` needs to bring in `asio_static_lib`.
-# This is done by `target_link_libraries(asio_interface INTERFACE asio_static_lib)`.
-
-# Re-doing Asio with the clearer understanding:
-# 1. asio_static_lib: compiled from asio.cpp. Needs include path & defines for itself.
-# 2. asio_interface: INTERFACE library that consumers link to. It provides include paths, defines, and links to asio_static_lib.
-
-# Clean slate for Asio:
-message(STATUS "Configuring Asio (Revised)...")
-add_library(asio_static_lib STATIC ${ASIO_CPP_FILE})
-target_include_directories(asio_static_lib PRIVATE # PRIVATE, as these are for compiling asio.cpp itself
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/asio/asio/include
-)
-target_compile_definitions(asio_static_lib PRIVATE # PRIVATE, for compiling asio.cpp
-    ASIO_SEPARATE_COMPILATION
-    ASIO_STANDALONE
-)
-
-add_library(asio_interface INTERFACE)
-target_include_directories(asio_interface INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/asio/asio/include  # Consumers need this path
-)
-target_compile_definitions(asio_interface INTERFACE
-    ASIO_SEPARATE_COMPILATION  # Consumers need these defines
-    ASIO_STANDALONE
-)
-target_link_libraries(asio_interface INTERFACE
-    asio_static_lib # Consumers of asio_interface will also link to asio_static_lib
-)
-message(STATUS "Asio configured: asio_interface (links to asio_static_lib).")
-
-
-# SOCI (database access library)
-message(STATUS "Configuring SOCI (populating sources)...")
-# soci_lib and soci_interface targets should exist from previous setup.
-
-set(SOCI_CORE_SOURCES "")
-file(GLOB SOCI_CORE_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/soci/src/core/*.cpp")
-if(SOCI_CORE_SOURCES_CPP)
-    list(APPEND SOCI_CORE_SOURCES ${SOCI_CORE_SOURCES_CPP})
-    message(STATUS "  Adding SOCI core sources: ${SOCI_CORE_SOURCES_CPP}")
-else()
-    message(WARNING "  No .cpp sources found in lib/soci/src/core/ for soci_lib.")
-endif()
-
-if(SOCI_CORE_SOURCES)
-    target_sources(soci_lib PRIVATE ${SOCI_CORE_SOURCES})
-else()
-    # Add a dummy source if no core sources are found to keep the library valid, though this is unexpected.
-    # Consider a FATAL_ERROR if core SOCI sources are essential and missing.
-    message(WARNING "  soci_lib has no core sources. This might be an error.")
-endif()
-
-# Conditional PostgreSQL backend for SOCI
-if(NOT DISABLE_POSTGRES AND HAVE_POSTGRES) # HAVE_POSTGRES is set in Libpq section
-    message(STATUS "  PostgreSQL is enabled for SOCI.")
-    set(SOCI_POSTGRESQL_SOURCES "")
-    file(GLOB SOCI_POSTGRESQL_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/soci/src/backends/postgresql/*.cpp")
-    if(SOCI_POSTGRESQL_SOURCES_CPP)
-        list(APPEND SOCI_POSTGRESQL_SOURCES ${SOCI_POSTGRESQL_SOURCES_CPP})
-        target_sources(soci_lib PRIVATE ${SOCI_POSTGRESQL_SOURCES})
-        message(STATUS "    Added SOCI PostgreSQL backend sources: ${SOCI_POSTGRESQL_SOURCES_CPP}")
-
-        # Link soci_lib to PostgreSQL::libpq
-        # soci_interface already links to soci_lib, so consumers of soci_interface will get this.
-        target_link_libraries(soci_lib PUBLIC PostgreSQL::libpq) # PUBLIC so it propagates if needed, or PRIVATE if only soci_lib needs it
-        message(STATUS "    soci_lib linked to PostgreSQL::libpq.")
-
-        # Add PostgreSQL include dirs to soci_interface if not already covered by PostgreSQL::libpq target
-        # Assuming PostgreSQL::libpq correctly sets its INTERFACE_INCLUDE_DIRECTORIES
-        # target_include_directories(soci_interface INTERFACE ${POSTGRESQL_INCLUDE_DIRS})
-        # target_compile_definitions(soci_interface INTERFACE SOCI_HAVE_POSTGRESQL) # Might be needed by SOCI config
-        # However, SOCI's own config.h or CMake setup usually handles SOCI_HAVE_POSTGRESQL if sources are compiled.
-        # For now, just linking is sufficient as per instructions.
-    else()
-        message(WARNING "  PostgreSQL backend for SOCI enabled, but no .cpp sources found in lib/soci/src/backends/postgresql/.")
-    endif()
-else()
-    message(STATUS "  PostgreSQL backend for SOCI is disabled (DISABLE_POSTGRES: ${DISABLE_POSTGRES}, HAVE_POSTGRES: ${HAVE_POSTGRES}).")
-endif()
-
-message(STATUS "SOCI source population complete.")
-
-# Libmedida (metrics library)
-message(STATUS "Configuring Libmedida (populating sources if internal)...")
-option(FORCE_INTERNAL_LIBMEDIDA "Force building libmedida from source" OFF)
-if(SANITIZER_ENABLED_NAME)
-    message(STATUS "  Sanitizer (${SANITIZER_ENABLED_NAME}) is enabled. Forcing internal build of libmedida.")
-    set(FORCE_INTERNAL_LIBMEDIDA ON)
-endif()
-
-set(USING_INTERNAL_LIBMEDIDA FALSE) # Default to not using internal
-
-if(NOT FORCE_INTERNAL_LIBMEDIDA AND PkgConfig_FOUND)
-    pkg_check_modules(LIBMEDIDA_PKG libmedida)
-endif()
-
-if(LIBMEDIDA_PKG_FOUND AND NOT FORCE_INTERNAL_LIBMEDIDA)
-    message(STATUS "Found libmedida via pkg-config: ${LIBMEDIDA_PKG_LIBRARIES} (includes: ${LIBMEDIDA_PKG_INCLUDE_DIRS})")
-    add_library(medida_interface INTERFACE IMPORTED)
-    set_target_properties(medida_interface PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBMEDIDA_PKG_INCLUDE_DIRS}"
-        INTERFACE_LINK_LIBRARIES "${LIBMEDIDA_PKG_LIBRARIES}"
-    )
-    # LIBMEDIDA_LIBRARIES and LIBMEDIDA_INCLUDE_DIRS are set by pkg_check_modules if successful.
-    # We can use these directly or through the interface library.
-    set(MEDIDA_LIBRARIES ${LIBMEDIDA_PKG_LIBRARIES})
-    set(MEDIDA_INCLUDE_DIRS ${LIBMEDIDA_PKG_INCLUDE_DIRS})
-else()
-    if(FORCE_INTERNAL_LIBMEDIDA)
-        message(STATUS "Forcing internal build of libmedida.")
-    elseif(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not found. Building libmedida from internal sources.")
-    else()
-        message(STATUS "libmedida not found via pkg-config. Building from internal sources.")
-    endif()
-
-    set(USING_INTERNAL_LIBMEDIDA TRUE)
-    add_library(medida_lib STATIC "") # Define/ensure medida_lib exists if internal
-    add_library(medida_interface INTERFACE) # Define/ensure medida_interface exists
-
-    target_include_directories(medida_interface INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src
-    )
-    target_link_libraries(medida_lib PRIVATE medida_interface)
-    target_link_libraries(medida_interface INTERFACE medida_lib)
-
-    set(MEDIDA_LIBRARIES medida_interface)
-    set(MEDIDA_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src)
-    message(STATUS "  Configured for internal libmedida build (USING_INTERNAL_LIBMEDIDA: TRUE).")
-
-    # Populate sources for medida_lib
-    set(MEDIDA_INTERNAL_SOURCES "")
-    file(GLOB MEDIDA_CORE_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src/medida/*.cpp")
-    if(MEDIDA_CORE_SOURCES_CPP)
-        list(APPEND MEDIDA_INTERNAL_SOURCES ${MEDIDA_CORE_SOURCES_CPP})
-    endif()
-    file(GLOB MEDIDA_REPORTING_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src/medida/reporting/*.cpp")
-    if(MEDIDA_REPORTING_SOURCES_CPP)
-        list(APPEND MEDIDA_INTERNAL_SOURCES ${MEDIDA_REPORTING_SOURCES_CPP})
-    endif()
-    file(GLOB MEDIDA_STATS_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.cpp")
-    if(MEDIDA_STATS_SOURCES_CPP)
-        list(APPEND MEDIDA_INTERNAL_SOURCES ${MEDIDA_STATS_SOURCES_CPP})
-    endif()
-
-    if(MEDIDA_INTERNAL_SOURCES)
-        target_sources(medida_lib PRIVATE ${MEDIDA_INTERNAL_SOURCES})
-        message(STATUS "    Added internal Libmedida sources: ${MEDIDA_INTERNAL_SOURCES}")
-    else()
-        message(WARNING "    USING_INTERNAL_LIBMEDIDA is TRUE, but no sources found for libmedida in specified paths.")
-        # Add a dummy source to prevent CMake errors if truly no sources are found.
-        # This might indicate an issue with the submodule or directory structure.
-        # set(MEDIDA_DUMMY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/dummy_medida.cpp")
-        # file(WRITE ${MEDIDA_DUMMY_SOURCE} "void medida_dummy() {}")
-        # target_sources(medida_lib PRIVATE ${MEDIDA_DUMMY_SOURCE})
-    endif()
-else()
-     message(STATUS "  Using system/pkg-config libmedida (USING_INTERNAL_LIBMEDIDA: FALSE). medida_lib target will not be populated with sources.")
-endif()
-# MEDIDA_LIBRARIES and MEDIDA_INCLUDE_DIRS are set, or medida_interface (linking to internal medida_lib) is ready.
-
-
-# Libpq (PostgreSQL client library)
+# Libpq (PostgreSQL client library) - This needs to stay here if soci_lib in lib/CMakeLists.txt needs PostgreSQL::libpq
 set(HAVE_POSTGRES 0 CACHE INTERNAL "PostgreSQL support enabled status for config.h") # Default to disabled
 if(NOT DISABLE_POSTGRES)
     if(PkgConfig_FOUND)
@@ -616,21 +382,14 @@ if(NOT DISABLE_POSTGRES)
         find_package(PostgreSQL QUIET) # Standard CMake module
         if(PostgreSQL_FOUND)
             message(STATUS "Found PostgreSQL via find_package: ${PostgreSQL_LIBRARIES} (includes: ${PostgreSQL_INCLUDE_DIRS})")
-            # PostgreSQL_LIBRARIES and PostgreSQL_INCLUDE_DIRS are set by FindPostgreSQL
             set(POSTGRESQL_LIBRARIES ${PostgreSQL_LIBRARIES})
             set(POSTGRESQL_INCLUDE_DIRS ${PostgreSQL_INCLUDE_DIRS})
             set(HAVE_POSTGRES 1) # For config.h
-
-            # The FindPostgreSQL module typically creates PostgreSQL::PostgreSQL if version 9+
-            # For older CMake or versions, it might just set variables.
-            # We'll ensure a consistent target PostgreSQL::libpq exists.
             if(TARGET PostgreSQL::PostgreSQL)
                 message(STATUS "Using target PostgreSQL::PostgreSQL from find_package(PostgreSQL).")
-                # Alias it or create our own interface that uses it
                 add_library(PostgreSQL::libpq INTERFACE IMPORTED)
                 target_link_libraries(PostgreSQL::libpq INTERFACE PostgreSQL::PostgreSQL)
             else()
-                # Create the interface library from variables
                 add_library(PostgreSQL::libpq INTERFACE IMPORTED)
                 set_target_properties(PostgreSQL::libpq PROPERTIES
                     INTERFACE_INCLUDE_DIRECTORIES "${POSTGRESQL_INCLUDE_DIRS}"
@@ -640,7 +399,7 @@ if(NOT DISABLE_POSTGRES)
             message(STATUS "PostgreSQL configured using find_package(PostgreSQL). Target PostgreSQL::libpq created/aliased.")
         else()
             message(WARNING "PostgreSQL (libpq) not found via pkg-config or find_package. PostgreSQL support will be disabled.")
-            set(DISABLE_POSTGRES ON) # Effectively disable it if not found
+            set(DISABLE_POSTGRES ON) 
             set(HAVE_POSTGRES 0)
         endif()
     endif()
@@ -648,74 +407,6 @@ else()
     message(STATUS "PostgreSQL support disabled via DISABLE_POSTGRES option.")
     set(HAVE_POSTGRES 0)
 endif()
-# POSTGRESQL_LIBRARIES and POSTGRESQL_INCLUDE_DIRS are set if found, or target PostgreSQL::libpq
-# HAVE_POSTGRES is set for config.h
-
-
-# lib3rdparty_a (custom static library for various utilities)
-message(STATUS "Configuring lib3rdparty_a...")
-set(LIB3RDPARTY_SOURCES "")
-
-# Glob sources from lib/util
-file(GLOB UTIL_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/util/*.cpp")
-if(UTIL_SOURCES_CPP)
-    list(APPEND LIB3RDPARTY_SOURCES ${UTIL_SOURCES_CPP})
-    message(STATUS "  Added sources from lib/util: ${UTIL_SOURCES_CPP}")
-else()
-    message(WARNING "  No .cpp sources found in lib/util for lib3rdparty_a.")
-endif()
-
-# Glob sources from lib/json (typically jsoncpp.cpp)
-file(GLOB JSON_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/json/*.cpp")
-if(JSON_SOURCES_CPP)
-    list(APPEND LIB3RDPARTY_SOURCES ${JSON_SOURCES_CPP})
-    message(STATUS "  Added sources from lib/json: ${JSON_SOURCES_CPP}")
-else()
-    message(WARNING "  No .cpp sources found in lib/json for lib3rdparty_a.")
-endif()
-
-# Conditional sources and linking for spdlog
-if(USE_SPDLOG)
-    # spdlog sources (excluding bundled_fmtlib_format.cpp as fmt is separate)
-    file(GLOB SPDLOG_LIB_SOURCES_CPP "${CMAKE_CURRENT_SOURCE_DIR}/lib/spdlog/src/*.cpp")
-    list(FILTER SPDLOG_LIB_SOURCES_CPP EXCLUDE REGEX ".*bundled_fmtlib_format\\.cpp$")
-    if(SPDLOG_LIB_SOURCES_CPP)
-        list(APPEND LIB3RDPARTY_SOURCES ${SPDLOG_LIB_SOURCES_CPP})
-        message(STATUS "  Added sources from lib/spdlog/src: ${SPDLOG_LIB_SOURCES_CPP}")
-    else()
-        message(WARNING "  No .cpp sources (excluding bundled_fmtlib_format.cpp) found in lib/spdlog/src for lib3rdparty_a, though USE_SPDLOG is ON.")
-    endif()
-endif()
-
-if(NOT LIB3RDPARTY_SOURCES)
-    message(WARNING "No source files collected for lib3rdparty_a. It will be an empty library if no sources are added.")
-    # Add a dummy source to prevent CMake errors for an empty static library, if truly no sources.
-    # However, given the globs, it's expected some sources will be found.
-    # Consider adding a dummy file if this warning persists and is unexpected.
-    # set(LIB3RDPARTY_DUMMY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/dummy_lib3rdparty.cpp")
-    # file(WRITE ${LIB3RDPARTY_DUMMY_SOURCE} "void lib3rdparty_dummy() {}")
-    # list(APPEND LIB3RDPARTY_SOURCES ${LIB3RDPARTY_DUMMY_SOURCE})
-endif()
-
-add_library(lib3rdparty_a STATIC ${LIB3RDPARTY_SOURCES})
-
-target_include_directories(lib3rdparty_a PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/util
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/json
-    # Asio include dirs are provided by linking against asio_interface
-    # Spdlog include dirs are provided by linking against spdlog_interface (if USE_SPDLOG)
-)
-
-# Link lib3rdparty_a to other necessary libraries
-target_link_libraries(lib3rdparty_a PUBLIC asio_interface sqlite3_lib)
-message(STATUS "  lib3rdparty_a linked publicly to asio_interface and sqlite3_lib.")
-
-if(USE_SPDLOG)
-    target_link_libraries(lib3rdparty_a PUBLIC spdlog_interface)
-    message(STATUS "  lib3rdparty_a linked publicly to spdlog_interface.")
-endif()
-
-message(STATUS "lib3rdparty_a configuration complete.")
 
 # Cereal (header-only, but has CMakeLists for options/installation)
 set(CEREAL_BUILD_TESTS OFF CACHE BOOL "Disable Cereal tests")
@@ -731,81 +422,172 @@ add_subdirectory(lib/fmt)
 message(STATUS "Added subdirectory: lib/fmt (Tests: ${FMT_TEST})")
 
 # spdlog
+# This needs to be defined before add_subdirectory(lib) because lib3rdparty_a in lib/CMakeLists.txt links to spdlog_interface.
 if(USE_SPDLOG)
     set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "Disable spdlog tests")
     set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "Disable spdlog examples")
-    # spdlog can be header-only or compiled. The CMakeLists.txt handles this.
-    # We want to use its targets.
-    add_subdirectory(lib/spdlog)
+    add_subdirectory(lib/spdlog) # Defines spdlog::spdlog
     message(STATUS "Added subdirectory: lib/spdlog (Tests: ${SPDLOG_BUILD_TESTS}, Examples: ${SPDLOG_BUILD_EXAMPLES})")
 
-    # Create an interface library that links against spdlog::spdlog
-    # This allows other targets in our project to link against spdlog_interface
-    # consistently, whether spdlog is header-only or compiled.
     add_library(spdlog_interface INTERFACE)
     target_link_libraries(spdlog_interface INTERFACE spdlog::spdlog)
     message(STATUS "Created spdlog_interface and linked to spdlog::spdlog")
 else()
-    # Create a dummy spdlog_interface if USE_SPDLOG is OFF
-    # This allows targets to link against spdlog_interface without errors,
-    # and it will just be an empty interface.
     add_library(spdlog_interface INTERFACE)
     message(STATUS "USE_SPDLOG is OFF. Created dummy spdlog_interface.")
 endif()
 
-# Tracy Profiler Client Stub
-# The main option is ENABLE_TRACY. Tracy's CMakeLists.txt uses TRACY_ENABLE.
-if(ENABLE_TRACY)
-    # Tracy options that might be relevant (defaults are usually fine for client):
-    # TRACY_ENABLE: ON/OFF (set based on our ENABLE_TRACY)
-    # TRACY_ON_DEMAND: OFF (enables on-demand client-side recording, not typically needed for basic integration)
-    # TRACY_NO_EXIT: OFF (prevents client from exiting automatically)
-    # TRACY_FIBERS: ON (enables fiber support)
-    # TRACY_NO_BROADCAST: OFF (disables network broadcast for server discovery)
-    # TRACY_ONLY_IPV4: OFF (forces IPv4 for network communication)
-    # TRACY_TIMER_FALLBACK: OFF (uses less precise timers if high-precision ones fail)
-    # TRACY_COLLECT_THREAD_NAMES: ON (collects thread names)
-    # TRACY_NO_SYSTEM_TRACING: OFF (disables system event tracing)
-    # TRACY_NO_CODE_TRANSFER: OFF (disables code transfer to server)
-    # TRACY_NO_CONTEXT_SWITCH: OFF (disables context switch tracing)
-    # TRACY_NO_SAMPLING: OFF (disables statistical sampling)
-    # TRACY_NO_FRAME_IMAGE: OFF (disables frame image capture)
-    # TRACY_NO_CALLSTACK: OFF (disables callstack collection) - Note: libunwind is used by Tracy for callstacks on some platforms.
+# Add the lib subdirectory which now contains several library definitions
+add_subdirectory(lib)
+message(STATUS "Added subdirectory: lib (contains sqlite3_lib, asio, soci, medida, lib3rdparty_a)")
 
-    set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy client profiler" FORCE)
-    # Disable parts of tracy we don't need for a client library
-    set(TRACY_PROFILER ON CACHE BOOL "Build Tracy Profiler (client part)" FORCE) # Ensure profiler client is built
-    set(TRACY_CAPTURE OFF CACHE BOOL "Disable Tracy Capture utility" FORCE) # Separate utility
-    set(TRACY_GUI OFF CACHE BOOL "Disable Tracy GUI utility" FORCE) # Separate utility
-    set(TRACY_UPDATE OFF CACHE BOOL "Disable Tracy Update utility" FORCE) # Separate utility
-    set(TRACY_CSERVE OFF CACHE BOOL "Disable Tracy CServe utility" FORCE) # Separate utility
-    set(TRACY_IMPORTER OFF CACHE BOOL "Disable Tracy Importer utility" FORCE) # Separate utility
 
-    # If DISABLE_LIBUNWIND is set, ensure Tracy knows not to attempt using it, if it has such an option.
-    # Tracy's CMake seems to check for libunwind itself.
-    # We might need to pass -DTRACY_NO_CALLSTACK if DISABLE_LIBUNWIND is true and tracy doesn't pick it up.
-    if(DISABLE_LIBUNWIND AND NOT APPLE) # On Apple, Tracy uses other mechanisms for callstacks
-         # Tracy has TRACY_NO_CALLSTACK, but it also has specific defines like TRACY_HAS_LIBUNWIND
-         # It's better to let Tracy's CMakeLists.txt handle libunwind detection.
-         # If issues arise, we might need to explicitly set TRACY_NO_CALLSTACK=ON here.
-         message(STATUS "DISABLE_LIBUNWIND is ON. Tracy might have limited callstack capabilities if it relies on libunwind.")
+# Tracy Profiler Integration
+# Option ENABLE_TRACY ("Enable Tracy profiler client stub") should already exist.
+option(ENABLE_TRACY_GUI "Build the Tracy GUI profiler tool" OFF)
+option(ENABLE_TRACY_CAPTURE "Build the Tracy capture command-line tool" OFF)
+option(ENABLE_TRACY_CSVEXPORT "Build the Tracy csvexport command-line tool" OFF)
+
+if(ENABLE_TRACY OR ENABLE_TRACY_GUI OR ENABLE_TRACY_CAPTURE OR ENABLE_TRACY_CSVEXPORT)
+    message(STATUS "Tracy integration enabled (Client: ${ENABLE_TRACY}, GUI: ${ENABLE_TRACY_GUI}, Capture: ${ENABLE_TRACY_CAPTURE}, CSVExport: ${ENABLE_TRACY_CSVEXPORT})")
+
+    # Set common Tracy options
+    set(TRACY_NO_ISA_EXTENSIONS ON CACHE BOOL "Tracy: Disable ISA extensions" FORCE) # From Makefile.am
+    set(TRACY_NO_LTO ON CACHE BOOL "Tracy: Disable LTO" FORCE) # From Makefile.am
+
+    # Set options based on our CMake options
+    # TRACY_ENABLE is for the client library part
+    set(TRACY_ENABLE ${ENABLE_TRACY} CACHE BOOL "Tracy: Enable client library" FORCE)
+
+    # Options for building tools (Profiler GUI, Capture, CSVExport)
+    # These are guesses for Tracy's CMake options; actual names might differ.
+    # The prompt suggested TRACY_PROFILER for GUI, TRACY_CAPTURE_TOOL for capture.
+    set(TRACY_PROFILER ${ENABLE_TRACY_GUI} CACHE BOOL "Tracy: Build Profiler GUI" FORCE)
+    set(TRACY_CAPTURE_TOOL ${ENABLE_TRACY_CAPTURE} CACHE BOOL "Tracy: Build Capture Tool" FORCE)
+    set(TRACY_ON_DEMAND OFF CACHE BOOL "Tracy: Disable on-demand client recording" FORCE) # Usually for client library, but ensure tools don't require it unexpectedly
+    set(TRACY_MANUAL_LIFETIME OFF CACHE BOOL "Tracy: Disable manual lifetime management" FORCE) # Ensure default behavior for tools
+
+    # Specific options from Makefile.am for GUI (TRACY_LEGACY_GUI) and other tools
+    # These might need to be adjusted based on Tracy's current CMakeLists.txt
+    set(TRACY_LEGACY_GUI ${ENABLE_TRACY_GUI} CACHE BOOL "Tracy: Enable Legacy GUI (if applicable)" FORCE) # If GUI is built, enable legacy if that's the one needed
+    
+    # For csvexport, the option name is less certain. Assuming TRACY_CSVEXPORTER.
+    # If there isn't a specific option for csvexport, it might be built if TRACY_TOOLS or similar is ON.
+    # For now, we assume individual options. If Tracy builds all tools together via one option, that would be simpler.
+    # Let's assume these tools are enabled if their corresponding main option is ON.
+    # Tracy's CMakeLists.txt has options like:
+    # TRACY_PROFILER (for GUI)
+    # TRACY_CAPTURE (for capture tool)
+    # TRACY_CSERVE (for server)
+    # TRACY_CSVEXPORTER (this seems to be a direct option based on some versions of Tracy)
+    set(TRACY_CSVEXPORTER ${ENABLE_TRACY_CSVEXPORT} CACHE BOOL "Tracy: Build CSV Exporter tool" FORCE)
+
+
+    # Dependency checks for GUI and other tools
+    if(ENABLE_TRACY_GUI OR ENABLE_TRACY_CAPTURE) # Capture might also use some of these
+        if(PkgConfig_FOUND)
+            pkg_check_modules(FREETYPE QUIET freetype2)
+            if(FREETYPE_FOUND)
+                set(TRACY_FREETYPE_LIB ${FREETYPE_LIBRARIES} CACHE STRING "Tracy: Freetype libraries" FORCE)
+                set(TRACY_FREETYPE_INCLUDE_DIR ${FREETYPE_INCLUDE_DIRS} CACHE PATH "Tracy: Freetype include dirs" FORCE)
+                message(STATUS "  Tracy: Found Freetype (Libs: ${TRACY_FREETYPE_LIB}, Includes: ${TRACY_FREETYPE_INCLUDE_DIR})")
+            else()
+                message(WARNING "  Tracy: Freetype (freetype2) not found by pkg-config. GUI/Capture might have issues or use bundled.")
+            endif()
+
+            pkg_check_modules(GLFW QUIET glfw3)
+            if(GLFW_FOUND)
+                set(GLFW_LIBRARIES ${GLFW_LIBRARIES} CACHE STRING "Tracy: GLFW libraries" FORCE) # Tracy might pick this up directly or need TRACY_GLFW_LIB
+                set(GLFW_INCLUDE_DIRS ${GLFW_INCLUDE_DIRS} CACHE PATH "Tracy: GLFW include dirs" FORCE) # Tracy might pick this up directly or need TRACY_GLFW_INCLUDE_DIR
+                message(STATUS "  Tracy: Found GLFW3 (Libs: ${GLFW_LIBRARIES}, Includes: ${GLFW_INCLUDE_DIRS})")
+            else()
+                message(WARNING "  Tracy: GLFW3 not found by pkg-config. GUI/Capture might have issues or use bundled.")
+            endif()
+
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                pkg_check_modules(GTK2 QUIET gtk+-2.0)
+                if(GTK2_FOUND)
+                    set(GTK2_LIBRARIES ${GTK2_LIBRARIES} CACHE STRING "Tracy: GTK2 libraries" FORCE) # Tracy might pick this up
+                    set(GTK2_INCLUDE_DIRS ${GTK2_INCLUDE_DIRS} CACHE PATH "Tracy: GTK2 include dirs" FORCE) # Tracy might pick this up
+                    message(STATUS "  Tracy: Found GTK2 (Libs: ${GTK2_LIBRARIES}, Includes: ${GTK2_INCLUDE_DIRS})")
+                else()
+                    message(WARNING "  Tracy: GTK2 (gtk+-2.0) not found by pkg-config (Linux only). GUI might have issues.")
+                endif()
+            endif()
+        else()
+            message(WARNING "  Tracy: pkg-config not found. Dependency detection for Freetype, GLFW, GTK2 will be limited. Tracy might use bundled versions.")
+        endif()
     endif()
 
-    add_subdirectory(lib/tracy)
-    message(STATUS "Added subdirectory: lib/tracy (TRACY_ENABLE: ON)")
-    # After adding tracy, its library target (usually `TracyClient`) will be available.
-    # We will link against this in targets that need profiling.
-    # For now, just adding the subdirectory is sufficient.
-else()
-    message(STATUS "ENABLE_TRACY is OFF. Tracy client will not be built.")
-    # If Tracy is not enabled, targets that would optionally link to it should still compile.
-    # This might involve using an interface library for Tracy similar to spdlog,
-    # or using target_compile_definitions to define TRACY_ENABLE=0.
-    # For now, just not adding the subdirectory is the primary action.
-    # We can define a dummy Tracy::TracyClient target if needed later for linking.
-    # add_library(TracyClient INTERFACE) # Or whatever Tracy's target is called
-endif()
+    # Capstone dependency (often used by profilers for disassembly)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CAPSTONE QUIET capstone)
+        if(CAPSTONE_FOUND)
+            set(CAPSTONE_LIBRARIES ${CAPSTONE_LIBRARIES} CACHE STRING "Tracy: Capstone libraries" FORCE) # Tracy might pick this up
+            set(CAPSTONE_INCLUDE_DIRS ${CAPSTONE_INCLUDE_DIRS} CACHE PATH "Tracy: Capstone include dirs" FORCE) # Tracy might pick this up
+            message(STATUS "  Tracy: Found Capstone (Libs: ${CAPSTONE_LIBRARIES}, Includes: ${CAPSTONE_INCLUDE_DIRS})")
+        else()
+            message(WARNING "  Tracy: Capstone not found by pkg-config. Disassembly features might be unavailable or use bundled.")
+        endif()
+    else()
+        message(WARNING "  Tracy: pkg-config not found. Dependency detection for Capstone will be limited.")
+    endif()
 
+    # If DISABLE_LIBUNWIND is set, ensure Tracy knows not to attempt using it.
+    # Tracy's CMakeLists.txt has TRACY_HAS_LIBUNWIND, TRACY_NO_CALLSTACK etc.
+    # It's generally better to let Tracy's build system detect libunwind, but we can pass a hint.
+    if(DISABLE_LIBUNWIND AND NOT APPLE)
+         set(TRACY_NO_CALLSTACK ON CACHE BOOL "Tracy: Disable callstack collection due to DISABLE_LIBUNWIND" FORCE)
+         message(STATUS "  Tracy: DISABLE_LIBUNWIND is ON. Forcing TRACY_NO_CALLSTACK=ON.")
+    endif()
+
+    # Add lib/tracy as a subdirectory
+    # Ensure this path is correct relative to the root CMakeLists.txt
+    if(EXISTS "${CMAKE_SOURCE_DIR}/lib/tracy/CMakeLists.txt")
+        add_subdirectory(lib/tracy)
+        message(STATUS "  Added subdirectory: lib/tracy")
+
+        # Define Tracy GUI alias target if enabled
+        if(ENABLE_TRACY_GUI)
+            # The actual target name from Tracy's CMakeLists.txt might be 'Tracy Profiler', 'TracyOpenGL', 'tracy-profiler', etc.
+            # Assuming 'tracy-profiler' as a placeholder based on common naming.
+            # If this target name is incorrect, the add_executable ALIAS command will fail at CMake configuration time.
+            set(ACTUAL_TRACY_GUI_TARGET_NAME "tracy-profiler") # Placeholder
+            if(TARGET ${ACTUAL_TRACY_GUI_TARGET_NAME})
+                add_executable(tracy-gui ALIAS ${ACTUAL_TRACY_GUI_TARGET_NAME})
+                message(STATUS "  Aliased Tracy GUI target ${ACTUAL_TRACY_GUI_TARGET_NAME} to tracy-gui.")
+            else()
+                message(WARNING "  Tracy GUI target placeholder '${ACTUAL_TRACY_GUI_TARGET_NAME}' not found after adding lib/tracy. Cannot create tracy-gui alias. Check Tracy's CMakeLists.txt for the correct target name (e.g., TracyOpenGL, Profiler).")
+            endif()
+        endif()
+
+        # Define Tracy Capture tool alias target if enabled
+        if(ENABLE_TRACY_CAPTURE)
+            set(ACTUAL_TRACY_CAPTURE_TARGET_NAME "tracy-capture") # Placeholder, verify this in Tracy's CMake
+            if(TARGET ${ACTUAL_TRACY_CAPTURE_TARGET_NAME})
+                add_executable(stellar-core-tracy-capture ALIAS ${ACTUAL_TRACY_CAPTURE_TARGET_NAME})
+                message(STATUS "  Aliased Tracy Capture target ${ACTUAL_TRACY_CAPTURE_TARGET_NAME} to stellar-core-tracy-capture.")
+            else()
+                message(WARNING "  Tracy Capture target placeholder '${ACTUAL_TRACY_CAPTURE_TARGET_NAME}' not found after adding lib/tracy. Cannot create stellar-core-tracy-capture alias. Check Tracy's CMakeLists.txt for the correct target name.")
+            endif()
+        endif()
+
+        # Define Tracy CSV Export tool alias target if enabled
+        if(ENABLE_TRACY_CSVEXPORT)
+            set(ACTUAL_TRACY_CSVEXPORT_TARGET_NAME "tracy-csvexport") # Placeholder, verify this in Tracy's CMake
+            if(TARGET ${ACTUAL_TRACY_CSVEXPORT_TARGET_NAME})
+                add_executable(stellar-core-tracy-csvexport ALIAS ${ACTUAL_TRACY_CSVEXPORT_TARGET_NAME})
+                message(STATUS "  Aliased Tracy CSV Export target ${ACTUAL_TRACY_CSVEXPORT_TARGET_NAME} to stellar-core-tracy-csvexport.")
+            else()
+                message(WARNING "  Tracy CSV Export target placeholder '${ACTUAL_TRACY_CSVEXPORT_TARGET_NAME}' not found after adding lib/tracy. Cannot create stellar-core-tracy-csvexport alias. Check Tracy's CMakeLists.txt for the correct target name.")
+            endif()
+        endif()
+    else()
+        message(WARNING "  Tracy subdirectory lib/tracy not found. Cannot build Tracy components.")
+    endif()
+else()
+    message(STATUS "Tracy integration (client and tools) is disabled.")
+endif()
 
 # SQLite (amalgamation)
 # Create a static library for SQLite from its source files.
@@ -957,189 +739,33 @@ if(PLATFORM_SPECIFIC_LINK_LIBS)
     message(STATUS "Current platform specific link libraries: ${PLATFORM_SPECIFIC_LINK_LIBS}")
 endif()
 
-# XDR CODE GENERATION
-message(STATUS "Configuring XDR code generation...")
-
-# 1. Identify XDR Source Files
-set(XDR_SOURCES "")
-file(GLOB XDR_PROTOCOL_CURR_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/protocol-curr/xdr/*.x")
-if(XDR_PROTOCOL_CURR_FILES)
-    list(APPEND XDR_SOURCES ${XDR_PROTOCOL_CURR_FILES})
-    message(STATUS "  Found XDR files in src/protocol-curr/xdr/: ${XDR_PROTOCOL_CURR_FILES}")
-else()
-    message(WARNING "  No .x files found in src/protocol-curr/xdr/")
-endif()
-
-file(GLOB XDR_PROTOCOL_NEXT_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/protocol-next/xdr/*.x")
-if(XDR_PROTOCOL_NEXT_FILES)
-    list(APPEND XDR_SOURCES ${XDR_PROTOCOL_NEXT_FILES})
-    message(STATUS "  Found XDR files in src/protocol-next/xdr/: ${XDR_PROTOCOL_NEXT_FILES}")
-else()
-    message(WARNING "  No .x files found in src/protocol-next/xdr/")
-endif()
-
-if(NOT XDR_SOURCES)
-    message(WARNING "  No .x files found for XDR generation. This might be an error if XDR files are expected.")
-endif()
-
+# Global generated include directories (used by src/CMakeLists.txt)
+# These are added globally so that targets in src/ can find headers generated
+# by custom commands whose OUTPUT paths use these variables.
 set(XDR_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated/xdr")
 file(MAKE_DIRECTORY ${XDR_GENERATED_INCLUDE_DIR})
-include_directories(${XDR_GENERATED_INCLUDE_DIR}) # Add to global include path for all targets
-message(STATUS "  Generated XDR headers will be placed in: ${XDR_GENERATED_INCLUDE_DIR}")
-message(STATUS "  Added ${XDR_GENERATED_INCLUDE_DIR} to include directories.")
+include_directories(${XDR_GENERATED_INCLUDE_DIR})
+message(STATUS "  Global XDR generated include dir: ${XDR_GENERATED_INCLUDE_DIR}")
 
-# 2. Create Custom Commands for XDR Header Generation
-set(XDR_GENERATED_HEADERS "") # List to store paths of generated headers
-
-if(NOT XDRC_EXECUTABLE)
-    message(FATAL_ERROR "XDRC_EXECUTABLE is not set. It should be set by the xdrpp configuration. Cannot proceed with XDR header generation.")
-endif()
-
-foreach(XDR_FILE_FULL_PATH ${XDR_SOURCES})
-    get_filename_component(XDR_FILE_NAME ${XDR_FILE_FULL_PATH} NAME_WE) # Name without extension
-    get_filename_component(XDR_FILE_NAME_WITH_EXT ${XDR_FILE_FULL_PATH} NAME)
-    set(XDR_OUTPUT_HEADER "${XDR_GENERATED_INCLUDE_DIR}/${XDR_FILE_NAME}.h")
-
-    # Determine dependency for XDRC_EXECUTABLE
-    # If XDRC_EXECUTABLE points to a file built by an ExternalProject (e.g., xdrpp_external),
-    # then that ExternalProject target should be a dependency.
-    # The variable XDRC_EXECUTABLE is set to ${XDRPP_INSTALL_DIR}/bin/xdrc if internal,
-    # and this path is part of BUILD_BYPRODUCTS of xdrpp_external.
-    # So, depending on the xdrpp target (which depends on xdrpp_external) should suffice.
-    set(XDRC_DEPENDENCY "")
-    if(FORCE_INTERNAL_XDRPP) # Assuming FORCE_INTERNAL_XDRPP implies xdrpp_external target exists
-        # Check if xdrpp target (which depends on xdrpp_external) exists
-        if(TARGET xdrpp)
-            set(XDRC_DEPENDENCY xdrpp) # Depend on the library target that ensures xdrc is built
-        else()
-            # Fallback if only xdrpp_external target exists (less ideal)
-            set(XDRC_DEPENDENCY xdrpp_external)
-        endif()
-    else()
-        # If using system xdrc, XDRC_EXECUTABLE is a system path, no CMake target dependency.
-        # The file itself ${XDR_FILE_FULL_PATH} is an implicit dependency.
-    endif()
-
-    add_custom_command(
-        OUTPUT ${XDR_OUTPUT_HEADER}
-        COMMAND ${XDRC_EXECUTABLE} -hh -pedantic -o ${XDR_OUTPUT_HEADER} ${XDR_FILE_FULL_PATH}
-        DEPENDS ${XDR_FILE_FULL_PATH} ${XDRC_DEPENDENCY} # XDRC_DEPENDENCY might be empty if system tool
-        COMMENT "Generating C++ header from ${XDR_FILE_NAME_WITH_EXT} using ${XDRC_EXECUTABLE}"
-        VERBATIM # Ensure command is executed as written, especially with paths
-    )
-    list(APPEND XDR_GENERATED_HEADERS ${XDR_OUTPUT_HEADER})
-    message(STATUS "  Added custom command to generate ${XDR_OUTPUT_HEADER} from ${XDR_FILE_NAME_WITH_EXT}")
-endforeach()
-
-# 3. Generate XDRFilesSha256.cpp
-set(XDR_SHA256_CPP_FILE "${CMAKE_BINARY_DIR}/generated/XDRFilesSha256.cpp")
-set(GENERATED_CORE_SOURCES "") # Initialize list for generated core sources
-
-if(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION)
-    set(HASH_XDRS_PROTOCOL_ARG "protocol-next")
-else()
-    set(HASH_XDRS_PROTOCOL_ARG "protocol-curr")
-endif()
-message(STATUS "  Protocol argument for hash-xdrs.sh: ${HASH_XDRS_PROTOCOL_ARG}")
-
-set(HASH_XDRS_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/hash-xdrs.sh")
-if(NOT EXISTS ${HASH_XDRS_SCRIPT})
-    message(FATAL_ERROR "hash-xdrs.sh not found at ${HASH_XDRS_SCRIPT}. Cannot generate XDRFilesSha256.cpp.")
-endif()
-
-# Ensure XDR_SOURCES is not empty before adding it as a dependency
-if(XDR_SOURCES)
-    add_custom_command(
-        OUTPUT ${XDR_SHA256_CPP_FILE}
-        COMMAND bash ${HASH_XDRS_SCRIPT} ${HASH_XDRS_PROTOCOL_ARG} > ${XDR_SHA256_CPP_FILE}
-        DEPENDS ${XDR_SOURCES} ${HASH_XDRS_SCRIPT} # Depends on all .x files and the script itself
-        COMMENT "Generating ${XDR_SHA256_CPP_FILE} for ${HASH_XDRS_PROTOCOL_ARG}"
-        VERBATIM
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} # Script might assume it's run from source root
-    )
-    list(APPEND GENERATED_CORE_SOURCES ${XDR_SHA256_CPP_FILE})
-    message(STATUS "  Added custom command to generate ${XDR_SHA256_CPP_FILE}")
-else()
-    message(WARNING "  No XDR source files found, so XDRFilesSha256.cpp will not be generated. This might be an error.")
-    # Create an empty XDRFilesSha256.cpp if no XDR sources to avoid build issues if something expects this file.
-    # However, if XDR_SOURCES is empty, the script might fail or produce an empty file anyway.
-    # Let's ensure the file is created to avoid other targets failing to find it.
-    file(WRITE ${XDR_SHA256_CPP_FILE} "// No XDR sources found, this file is intentionally empty or contains minimal content.\nvoid xdrFilesSha256Dummy() {}\n")
-    list(APPEND GENERATED_CORE_SOURCES ${XDR_SHA256_CPP_FILE})
-    message(STATUS "  Created empty ${XDR_SHA256_CPP_FILE} as no XDR sources were found.")
-endif()
-
-message(STATUS "XDR code generation configuration complete.")
-# XDR_GENERATED_HEADERS and GENERATED_CORE_SOURCES are now populated.
-
-
-# FLEX/BISON XDR QUERY GENERATION
-message(STATUS "Configuring Flex/Bison for XDR Query parsing...")
-
-# 1. Find Flex and Bison
-find_package(FLEX REQUIRED)
-find_package(BISON REQUIRED)
-message(STATUS "  Found Flex: ${FLEX_EXECUTABLE}")
-message(STATUS "  Found Bison: ${BISON_EXECUTABLE}")
-
-# 2. Define Input and Output Files
-set(XDRQUERY_LEXER_INPUT "${CMAKE_SOURCE_DIR}/src/util/xdrquery/XDRQueryScanner.ll")
 set(XDRQUERY_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/xdrquery")
-set(XDRQUERY_LEXER_OUTPUT_CPP "${XDRQUERY_GENERATED_DIR}/XDRQueryScanner.cpp")
-
-set(XDRQUERY_PARSER_INPUT "${CMAKE_SOURCE_DIR}/src/util/xdrquery/XDRQueryParser.yy")
-set(XDRQUERY_PARSER_OUTPUT_CPP "${XDRQUERY_GENERATED_DIR}/XDRQueryParser.cpp")
-set(XDRQUERY_PARSER_OUTPUT_H "${XDRQUERY_GENERATED_DIR}/XDRQueryParser.h") # Bison output header
-
 file(MAKE_DIRECTORY ${XDRQUERY_GENERATED_DIR})
-message(STATUS "  XDRQuery generated files will be in: ${XDRQUERY_GENERATED_DIR}")
-
-# Check if input files exist
-if(NOT EXISTS ${XDRQUERY_LEXER_INPUT})
-    message(FATAL_ERROR "XDRQuery lexer input file not found: ${XDRQUERY_LEXER_INPUT}")
-endif()
-if(NOT EXISTS ${XDRQUERY_PARSER_INPUT})
-    message(FATAL_ERROR "XDRQuery parser input file not found: ${XDRQUERY_PARSER_INPUT}")
-endif()
-
-# 3. Add Custom Command for Flex (Lexer Generation)
-add_custom_command(
-    OUTPUT ${XDRQUERY_LEXER_OUTPUT_CPP}
-    COMMAND ${FLEX_EXECUTABLE} --outfile=${XDRQUERY_LEXER_OUTPUT_CPP} ${XDRQUERY_LEXER_INPUT}
-    DEPENDS ${XDRQUERY_LEXER_INPUT}
-    COMMENT "Generating C++ scanner from XDRQueryScanner.ll using Flex"
-    VERBATIM
-)
-message(STATUS "  Added custom command for Flex -> ${XDRQUERY_LEXER_OUTPUT_CPP}")
-
-# 4. Add Custom Command for Bison (Parser Generation)
-add_custom_command(
-    OUTPUT ${XDRQUERY_PARSER_OUTPUT_CPP} ${XDRQUERY_PARSER_OUTPUT_H} # Specify both outputs
-    COMMAND ${BISON_EXECUTABLE} --defines=${XDRQUERY_PARSER_OUTPUT_H} --output=${XDRQUERY_PARSER_OUTPUT_CPP} ${XDRQUERY_PARSER_INPUT}
-    DEPENDS ${XDRQUERY_PARSER_INPUT}
-    COMMENT "Generating C++ parser from XDRQueryParser.yy using Bison"
-    VERBATIM
-)
-message(STATUS "  Added custom command for Bison -> ${XDRQUERY_PARSER_OUTPUT_CPP} and ${XDRQUERY_PARSER_OUTPUT_H}")
-
-# 5. Add Generated Files to Source List and Include Directory
-list(APPEND GENERATED_CORE_SOURCES
-    ${XDRQUERY_LEXER_OUTPUT_CPP}
-    ${XDRQUERY_PARSER_OUTPUT_CPP}
-    # ${XDRQUERY_PARSER_OUTPUT_H} # Headers are not typically added to source lists for compilation
-)
-message(STATUS "  Added Flex/Bison generated .cpp files to GENERATED_CORE_SOURCES.")
-
 include_directories(${XDRQUERY_GENERATED_DIR})
-message(STATUS "  Added ${XDRQUERY_GENERATED_DIR} to include directories for XDRQueryParser.h.")
+message(STATUS "  Global XDRQuery generated include dir: ${XDRQUERY_GENERATED_DIR}")
 
-message(STATUS "Flex/Bison XDR Query generation configuration complete.")
+set(STELLAR_CORE_VERSION_CPP_DIR "${CMAKE_BINARY_DIR}/generated/main")
+file(MAKE_DIRECTORY ${STELLAR_CORE_VERSION_CPP_DIR})
+include_directories(${STELLAR_CORE_VERSION_CPP_DIR})
+message(STATUS "  Global StellarCoreVersion generated include dir: ${STELLAR_CORE_VERSION_CPP_DIR}")
 
+set(RUST_BRIDGE_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/rust")
+file(MAKE_DIRECTORY ${RUST_BRIDGE_GENERATED_DIR})
+include_directories(${RUST_BRIDGE_GENERATED_DIR})
+message(STATUS "  Global Rust Bridge generated include dir: ${RUST_BRIDGE_GENERATED_DIR}")
 
 # RUST INTEGRATION
 message(STATUS "Configuring Rust integration (Soroban setup and cxxbridge generation)...")
 
-# 1. Define Rust Toolchain and Cargo (already done, this is a good place for more Rust vars)
+# 1. Define Rust Toolchain and Cargo
 set(RUST_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/rust-toolchain.toml")
 set(RUST_TOOLCHAIN_CHANNEL "")
 
@@ -1441,53 +1067,32 @@ set(LIBRUST_STELLAR_CORE_A "${RUST_TARGET_DIR}/${RUST_PROFILE}/librust_stellar_c
 message(STATUS "    Output for main Rust library: ${LIBRUST_STELLAR_CORE_A}")
 
 # 2. Prepare Cargo Features for Main Library
-set(CARGO_FEATURE_TESTUTILS_STRING "")
+set(TEMP_FEATURES_FOR_MAIN_RUST_LIB "") # Initialize a temporary list for feature names
+
+if(CARGO_FEATURE_TRACY_STRING)
+    # CARGO_FEATURE_TRACY_STRING is already a comma-separated string like "f1,f2,f3"
+    # Split it into a list to correctly append other features.
+    string(REPLACE "," ";" _tracy_features_list_split "${CARGO_FEATURE_TRACY_STRING}")
+    list(APPEND TEMP_FEATURES_FOR_MAIN_RUST_LIB ${_tracy_features_list_split})
+endif()
+
+if(CARGO_FEATURE_NEXT_STRING)
+    # CARGO_FEATURE_NEXT_STRING is a single feature, "next"
+    list(APPEND TEMP_FEATURES_FOR_MAIN_RUST_LIB ${CARGO_FEATURE_NEXT_STRING})
+endif()
+
 if(BUILD_TESTS)
-    set(CARGO_FEATURE_TESTUTILS_STRING "--features" "testutils")
-    message(STATUS "    Testutils feature enabled for main Rust library (BUILD_TESTS is ON).")
+    list(APPEND TEMP_FEATURES_FOR_MAIN_RUST_LIB "testutils")
+    message(STATUS "    'testutils' feature will be added to main Rust library features (BUILD_TESTS is ON).")
 endif()
 
-set(MAIN_RUST_CARGO_FEATURES_LIST "")
-if(CARGO_FEATURE_TRACY_STRING) # This is a list of features already
-    list(APPEND MAIN_RUST_CARGO_FEATURES_LIST ${CARGO_FEATURE_TRACY_STRING})
+set(MAIN_RUST_CARGO_FEATURES_STRING "") # This will be the final "--features" string for cargo
+if(TEMP_FEATURES_FOR_MAIN_RUST_LIB)
+    list(REMOVE_DUPLICATES TEMP_FEATURES_FOR_MAIN_RUST_LIB) # Ensure uniqueness if features overlap
+    string(JOIN "," _joined_main_features "${TEMP_FEATURES_FOR_MAIN_RUST_LIB}")
+    set(MAIN_RUST_CARGO_FEATURES_STRING "--features" "${_joined_main_features}")
 endif()
-if(CARGO_FEATURE_NEXT_STRING) # This is a single feature name "next"
-    list(APPEND MAIN_RUST_CARGO_FEATURES_LIST ${CARGO_FEATURE_NEXT_STRING})
-endif()
-
-set(MAIN_RUST_CARGO_FEATURES_STRING "")
-if(MAIN_RUST_CARGO_FEATURES_LIST)
-    string(JOIN "," TEMP_MAIN_FEATURE_STRING "${MAIN_RUST_CARGO_FEATURES_LIST}")
-    set(MAIN_RUST_CARGO_FEATURES_STRING "--features" "${TEMP_MAIN_FEATURE_STRING}")
-endif()
-# Append testutils string if it's set (it already includes --features)
-if(CARGO_FEATURE_TESTUTILS_STRING)
-    # If MAIN_RUST_CARGO_FEATURES_STRING is already set, we need to append "testutils" to its list
-    # If not, CARGO_FEATURE_TESTUTILS_STRING can be used directly.
-    # The prompt implies CARGO_FEATURE_TESTUTILS_STRING is "--features testutils" or empty.
-    # This means it cannot be simply appended if other features are present.
-    # Re-evaluating feature string construction:
-    unset(MAIN_RUST_CARGO_FEATURES_LIST) # Start fresh
-    set(MAIN_RUST_CARGO_FEATURES_LIST "")
-    if(CARGO_FEATURE_TRACY_STRING)
-        # CARGO_FEATURE_TRACY_STRING is "feat1,feat2,feat3"
-        # Need to split it if it contains multiple features to avoid "feat1,feat2,feat3,next"
-        # However, the current setup makes CARGO_FEATURE_TRACY_STRING a comma-separated string ready for --features
-        # So, we need to collect individual feature *names* then join.
-        # For simplicity, assume CARGO_FEATURE_TRACY_STRING and CARGO_FEATURE_NEXT_STRING are just feature names or lists of names.
-        # Based on previous step: CARGO_FEATURE_TRACY_STRING is already a comma-separated list.
-        # CARGO_FEATURE_NEXT_STRING is just "next".
-        if(CARGO_FEATURE_TRACY_STRING) { list(APPEND MAIN_RUST_CARGO_FEATURES_LIST ${CARGO_FEATURE_TRACY_STRING}) } # This is already a string like "f1,f2"
-        if(CARGO_FEATURE_NEXT_STRING) { list(APPEND MAIN_RUST_CARGO_FEATURES_LIST ${CARGO_FEATURE_NEXT_STRING}) }
-        if(BUILD_TESTS) { list(APPEND MAIN_RUST_CARGO_FEATURES_LIST "testutils") }
-
-        if(MAIN_RUST_CARGO_FEATURES_LIST)
-            string(JOIN "," TEMP_MAIN_FEATURE_STRING_JOINED "${MAIN_RUST_CARGO_FEATURES_LIST}")
-            set(MAIN_RUST_CARGO_FEATURES_STRING "--features" "${TEMP_MAIN_FEATURE_STRING_JOINED}")
-        endif()
-    endif()
-    message(STATUS "    Main Rust library features: ${MAIN_RUST_CARGO_FEATURES_STRING}")
-endif()
+message(STATUS "    Main Rust library cargo feature flags: ${MAIN_RUST_CARGO_FEATURES_STRING}")
 
 
 # 3. Add Custom Command to Build librust_stellar_core.a
@@ -1651,17 +1256,19 @@ message(STATUS "  Added ${RUST_BRIDGE_OUTPUT_CPP} to GENERATED_CORE_SOURCES.")
 include_directories(${RUST_BRIDGE_GENERATED_DIR})
 message(STATUS "  Added ${RUST_BRIDGE_GENERATED_DIR} to include directories.")
 
-# Create a list for all generated headers for IDEs if it doesn't exist
-if(NOT DEFINED ALL_GENERATED_HEADERS_FOR_IDE)
-    set(ALL_GENERATED_HEADERS_FOR_IDE "")
-endif()
-list(APPEND ALL_GENERATED_HEADERS_FOR_IDE ${RUST_BRIDGE_OUTPUT_H})
-# Also add the .cpp to this list for IDEs that might benefit from seeing it, even if it's a source.
-list(APPEND ALL_GENERATED_HEADERS_FOR_IDE ${RUST_BRIDGE_OUTPUT_CPP})
-message(STATUS "  Added Rust bridge generated files to ALL_GENERATED_HEADERS_FOR_IDE for IDE visibility.")
+# Create a list for all generated headers for IDEs if it doesn't exist - This should be managed in src/CMakeLists.txt now or passed down.
+# if(NOT DEFINED ALL_GENERATED_HEADERS_FOR_IDE)
+#    set(ALL_GENERATED_HEADERS_FOR_IDE "")
+# endif()
+# list(APPEND ALL_GENERATED_HEADERS_FOR_IDE ${RUST_BRIDGE_OUTPUT_H})
+# list(APPEND ALL_GENERATED_HEADERS_FOR_IDE ${RUST_BRIDGE_OUTPUT_CPP})
+# message(STATUS "  Added Rust bridge generated files to ALL_GENERATED_HEADERS_FOR_IDE for IDE visibility.")
 
-message(STATUS "Rust integration (cxxbridge generation) configuration complete.")
+message(STATUS "Rust integration (Soroban setup and cxxbridge generator installation part in root) configuration complete.")
 
+# Add the src subdirectory which now contains the stellar-core executable definition and its code generation.
+add_subdirectory(src)
+message(STATUS "Added subdirectory: src (contains stellar-core executable and its code generation)")
 
 # CONFIG.H GENERATION
 include(CheckIncludeFiles)
@@ -1763,203 +1370,306 @@ message(STATUS "Generated config.h at: ${CONFIG_H_OUT_PATH} (HAVE_POSTGRES: ${HA
 include_directories("${CMAKE_BINARY_DIR}")
 message(STATUS "Added ${CMAKE_BINARY_DIR} to include directories for config.h.")
 
-# MAIN EXECUTABLE (stellar-core)
-message(STATUS "Configuring main executable: stellar-core")
+# MAIN EXECUTABLE (stellar-core) - This section is now moved to src/CMakeLists.txt
+if(BUILD_TESTS)
+    message(STATUS "Configuring CTest tests (BUILD_TESTS is ON)...")
 
-# 1. Generate StellarCoreVersion.cpp
-set(STELLAR_CORE_VERSION_CPP_DIR "${CMAKE_BINARY_DIR}/generated/main")
-set(STELLAR_CORE_VERSION_CPP "${STELLAR_CORE_VERSION_CPP_DIR}/StellarCoreVersion.cpp")
-set(STELLAR_CORE_VERSION_CPP_IN "${CMAKE_SOURCE_DIR}/src/main/StellarCoreVersion.cpp.in")
+    # Define path to test scripts (assuming they are in src/test)
+    set(TEST_SCRIPT_DIR "${CMAKE_SOURCE_DIR}/src/test")
 
-file(MAKE_DIRECTORY ${STELLAR_CORE_VERSION_CPP_DIR})
-message(STATUS "  Generated StellarCoreVersion.cpp will be in: ${STELLAR_CORE_VERSION_CPP_DIR}")
+    # selftest
+    if(NOT DISABLE_POSTGRES AND HAVE_POSTGRES)
+        if(EXISTS "${TEST_SCRIPT_DIR}/selftest-pg")
+            add_test(NAME stellar-core-selftest-pg COMMAND "${TEST_SCRIPT_DIR}/selftest-pg")
+            set_tests_properties(stellar-core-selftest-pg PROPERTIES WORKING_DIRECTORY "${TEST_SCRIPT_DIR}")
+            message(STATUS "  Added test: stellar-core-selftest-pg")
+        else()
+            message(WARNING "  Test script not found: ${TEST_SCRIPT_DIR}/selftest-pg")
+        endif()
+    else()
+        if(EXISTS "${TEST_SCRIPT_DIR}/selftest-nopg")
+            add_test(NAME stellar-core-selftest-nopg COMMAND "${TEST_SCRIPT_DIR}/selftest-nopg")
+            set_tests_properties(stellar-core-selftest-nopg PROPERTIES WORKING_DIRECTORY "${TEST_SCRIPT_DIR}")
+            message(STATUS "  Added test: stellar-core-selftest-nopg")
+        else()
+            message(WARNING "  Test script not found: ${TEST_SCRIPT_DIR}/selftest-nopg")
+        endif()
+    endif()
 
-if(NOT EXISTS ${STELLAR_CORE_VERSION_CPP_IN})
-    message(FATAL_ERROR "StellarCoreVersion.cpp.in not found at ${STELLAR_CORE_VERSION_CPP_IN}")
-endif()
+    # check-nondet
+    if(EXISTS "${TEST_SCRIPT_DIR}/check-nondet")
+        add_test(NAME stellar-core-check-nondet COMMAND "${TEST_SCRIPT_DIR}/check-nondet")
+        set_tests_properties(stellar-core-check-nondet PROPERTIES WORKING_DIRECTORY "${TEST_SCRIPT_DIR}")
+        # This test might depend on stellar-core executable being available.
+        # If it calls stellar-core from the build path, add dependency.
+        # Assuming for now it can find it or doesn't directly call it.
+        # set_tests_properties(stellar-core-check-nondet PROPERTIES DEPENDS stellar-core)
+        message(STATUS "  Added test: stellar-core-check-nondet")
+    else()
+        message(WARNING "  Test script not found: ${TEST_SCRIPT_DIR}/check-nondet")
+    endif()
 
-# Command to get version string (simplified for now, git describe can be complex in CMake)
-# Using PACKAGE_VERSION as a fallback if git describe fails or git is not found.
-set(VERSION_COMMAND_SCRIPT "")
-if(GIT_FOUND)
-    # Try to get git describe, fallback to PACKAGE_VERSION if it fails
-    set(VERSION_COMMAND_SCRIPT
-        "vers=$$(git describe --always --dirty --tags 2>/dev/null); "
-        "if [ -z \"$$vers\" ]; then vers=\"${PACKAGE_NAME} ${PACKAGE_VERSION}\"; fi; "
-        "echo \"$$vers\""
-    )
+    # check-sorobans
+    if(EXISTS "${TEST_SCRIPT_DIR}/check-sorobans")
+        add_test(NAME stellar-core-check-sorobans COMMAND "${TEST_SCRIPT_DIR}/check-sorobans")
+        set_tests_properties(stellar-core-check-sorobans PROPERTIES WORKING_DIRECTORY "${TEST_SCRIPT_DIR}")
+        # This test likely depends on the stellar-core executable.
+        # Add dependency to ensure stellar-core is built first.
+        if(TARGET stellar-core)
+            set_tests_properties(stellar-core-check-sorobans PROPERTIES DEPENDS stellar-core)
+            message(STATUS "  Added test: stellar-core-check-sorobans (depends on stellar-core target)")
+        else()
+            message(WARNING "  stellar-core target not found, cannot set dependency for stellar-core-check-sorobans test.")
+            message(STATUS "  Added test: stellar-core-check-sorobans (dependency not set)")
+        endif()
+    else()
+        message(WARNING "  Test script not found: ${TEST_SCRIPT_DIR}/check-sorobans")
+    endif()
+
+    # Placeholder for test data copying if needed later
+    # file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/testdata)
+    # add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/testdata/stellar-core_example.cfg
+    # COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/docs/stellar-core_example.cfg ${CMAKE_BINARY_DIR}/testdata/stellar-core_example.cfg
+    # DEPENDS ${CMAKE_SOURCE_DIR}/docs/stellar-core_example.cfg)
+    # add_custom_target(test_data_files DEPENDS ${CMAKE_BINARY_DIR}/testdata/stellar-core_example.cfg)
+    # set_tests_properties(stellar-core-selftest-pg PROPERTIES DEPENDS test_data_files)
+    # ... etc. for other tests/files
+
 else()
-    set(VERSION_COMMAND_SCRIPT "echo \"${PACKAGE_NAME} ${PACKAGE_VERSION}\"")
+    message(STATUS "Skipping CTest test definitions (BUILD_TESTS is OFF).")
 endif()
 
-# Temporary file for sed output
-set(STELLAR_CORE_VERSION_CPP_TMP "${STELLAR_CORE_VERSION_CPP}.tmp")
+# FORMATTING
+message(STATUS "Configuring format target...")
 
-add_custom_command(
-    OUTPUT ${STELLAR_CORE_VERSION_CPP}
-    # The command uses bash -c to handle shell features like $() and pipes.
-    # It first gets the version string, then uses sed to replace %%VERSION%%.
-    # Finally, it copies if different to avoid unnecessary recompilation.
-    COMMAND bash -c "${VERSION_COMMAND_SCRIPT} | sed -e 's@%%VERSION%%@'\"$$(cat -)\"'@' < \"${STELLAR_CORE_VERSION_CPP_IN}\" > \"${STELLAR_CORE_VERSION_CPP_TMP}\""
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${STELLAR_CORE_VERSION_CPP_TMP}" "${STELLAR_CORE_VERSION_CPP}"
-    COMMAND ${CMAKE_COMMAND} -E remove "${STELLAR_CORE_VERSION_CPP_TMP}"
-    DEPENDS ${STELLAR_CORE_VERSION_CPP_IN} # Re-run if template changes
-    # To re-run if git HEAD changes, one might depend on ${CMAKE_SOURCE_DIR}/.git/HEAD (if it exists and is a file)
-    # For simplicity and robustness across different git versions/setups, often this is made ALWAYS or
-    # a separate mechanism updates a version file that this depends on.
-    # For now, depending on the .in file is the primary trigger.
-    # Consider adding a more explicit re-evaluation trigger if git versioning is critical for every build.
-    # Using a stamp file that is always out-of-date can force re-run, or specific target.
-    # For this step, we'll rely on the .in file dependency. If git version changes, user might need to clean/reconfigure.
-    # A common pattern is to have a custom target that ALWAYS runs and touches a file this depends on.
-    COMMENT "Generating StellarCoreVersion.cpp"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} # git describe needs to be in the repo
-    VERBATIM
+# 1. Find clang-format
+find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format-12 clang-format)
+if(CLANG_FORMAT_EXECUTABLE)
+    message(STATUS "  Found clang-format: ${CLANG_FORMAT_EXECUTABLE}")
+else()
+    message(WARNING "  clang-format (clang-format-12 or clang-format) not found. C++ formatting will be skipped.")
+endif()
+
+# 2. Collect C++ Files for Formatting
+set(CPP_FILES_TO_FORMAT "")
+
+# Glob for src/ files (excluding specified directories)
+file(GLOB_RECURSE SRC_ALL_CPP_H_FILES
+    "${CMAKE_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/*.h"
 )
-message(STATUS "  Added custom command to generate ${STELLAR_CORE_VERSION_CPP}")
-# Add this generated file to a list that will be part of STELLAR_CORE_MAIN_SOURCES
-list(APPEND GENERATED_CORE_SOURCES ${STELLAR_CORE_VERSION_CPP})
-
-# Add the output directory to include path for StellarCoreVersion.cpp
-include_directories(${STELLAR_CORE_VERSION_CPP_DIR})
-message(STATUS "  Added ${STELLAR_CORE_VERSION_CPP_DIR} to include directories.")
-
-# 2. Collect C++ Source Files for stellar-core
-set(STELLAR_CORE_MAIN_SOURCES "")
-message(STATUS "  Collecting C++ sources for stellar-core...")
-
-# Glob for all .cpp files under src/, then exclude specific directories/files.
-file(GLOB_RECURSE ALL_SRC_CPP_FILES "${CMAKE_SOURCE_DIR}/src/*.cpp")
-
-set(EXCLUDE_PATTERNS
-    "${CMAKE_SOURCE_DIR}/src/test/"
+set(SRC_EXCLUDE_PATTERNS
     "${CMAKE_SOURCE_DIR}/src/rust/"
     "${CMAKE_SOURCE_DIR}/src/protocol-curr/"
     "${CMAKE_SOURCE_DIR}/src/protocol-next/"
     "${CMAKE_SOURCE_DIR}/src/history/serialize-tests/"
-    "${CMAKE_SOURCE_DIR}/src/main/dumpxdr.cpp"
 )
-
-foreach(file ${ALL_SRC_CPP_FILES})
-    set(exclude_file FALSE)
-    foreach(pattern ${EXCLUDE_PATTERNS})
-        if(file MATCHES "^${pattern}") # Check if the file path starts with the pattern
-            set(exclude_file TRUE)
+foreach(file ${SRC_ALL_CPP_H_FILES})
+    set(exclude_this_file FALSE)
+    foreach(pattern ${SRC_EXCLUDE_PATTERNS})
+        if(file MATCHES "^${pattern}")
+            set(exclude_this_file TRUE)
             break()
         endif()
     endforeach()
-    if(NOT exclude_file)
-        list(APPEND STELLAR_CORE_MAIN_SOURCES ${file})
+    if(NOT exclude_this_file)
+        list(APPEND CPP_FILES_TO_FORMAT ${file})
+    endif()
+endforeach()
+message(STATUS "  Collected C++ files from src/ (with exclusions) for formatting.")
+
+# Glob for relevant lib/ files
+file(GLOB LIB_UTIL_FILES
+    "${CMAKE_SOURCE_DIR}/lib/util/*.h"
+    "${CMAKE_SOURCE_DIR}/lib/util/*.cpp"
+)
+if(LIB_UTIL_FILES) list(APPEND CPP_FILES_TO_FORMAT ${LIB_UTIL_FILES}) endif()
+
+set(LIB_JSON_FILES "${CMAKE_SOURCE_DIR}/lib/json/jsoncpp.cpp") # Specific file
+if(EXISTS ${LIB_JSON_FILES}) list(APPEND CPP_FILES_TO_FORMAT ${LIB_JSON_FILES}) endif()
+
+set(LIB_ASIO_FILE "${CMAKE_SOURCE_DIR}/lib/asio.cpp") # Specific file
+if(EXISTS ${LIB_ASIO_FILE}) list(APPEND CPP_FILES_TO_FORMAT ${LIB_ASIO_FILE}) endif()
+
+# Note: For SOCI and Libmedida, if we are using internal sources, they are part of lib3rdparty_a or specific targets.
+# The source files for soci_lib and medida_lib are already covered by the src/ glob if their sources are under src/ (e.g. src/lib/soci).
+# If their sources are under lib/ and compiled directly (not part of lib3rdparty_a), they need separate globbing.
+# Based on previous steps, soci_lib sources are from lib/soci/src/... and medida_lib from lib/libmedida/src/...
+# These are not currently added to CPP_FILES_TO_FORMAT. The prompt asks for "relevant files in lib/"
+# Let's add them if they are built internally.
+if(TARGET soci_lib) # Assuming soci_lib exists if SOCI is used (internal or not, but sources are relevant if internal)
+    file(GLOB SOCI_CORE_FORMAT_FILES "${CMAKE_SOURCE_DIR}/lib/soci/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/lib/soci/src/core/*.h")
+    if(SOCI_CORE_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${SOCI_CORE_FORMAT_FILES}) endif()
+    if(NOT DISABLE_POSTGRES AND HAVE_POSTGRES)
+        file(GLOB SOCI_PG_FORMAT_FILES "${CMAKE_SOURCE_DIR}/lib/soci/src/backends/postgresql/*.cpp" "${CMAKE_SOURCE_DIR}/lib/soci/src/backends/postgresql/*.h")
+        if(SOCI_PG_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${SOCI_PG_FORMAT_FILES}) endif()
+    endif()
+endif()
+
+if(USING_INTERNAL_LIBMEDIDA) # This variable was set during Libmedida configuration
+    file(GLOB MEDIDA_FORMAT_FILES
+        "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/*.cpp" "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/*.h"
+        "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/reporting/*.cpp" "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/reporting/*.h"
+        "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.cpp" "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.h"
+    )
+    if(MEDIDA_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${MEDIDA_FORMAT_FILES}) endif()
+endif()
+
+if(CPP_FILES_TO_FORMAT)
+    list(REMOVE_DUPLICATES CPP_FILES_TO_FORMAT)
+    message(STATUS "  Collected C++ files from lib/ for formatting.")
+    # For debugging: message(STATUS "  CPP_FILES_TO_FORMAT: ${CPP_FILES_TO_FORMAT}")
+else()
+    message(WARNING "  No C++ files collected for formatting. Check glob patterns.")
+endif()
+
+# 3. Define format-cpp Custom Target
+if(CLANG_FORMAT_EXECUTABLE AND CPP_FILES_TO_FORMAT)
+    add_custom_target(format-cpp
+        COMMAND ${CLANG_FORMAT_EXECUTABLE} -style=file -i ${CPP_FILES_TO_FORMAT}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Formatting C++ files with ${CLANG_FORMAT_EXECUTABLE}..."
+    )
+    message(STATUS "  Added custom target: format-cpp")
+else()
+    add_custom_target(format-cpp
+        COMMENT "clang-format not found or no C++ files to format. Skipping C++ formatting."
+    )
+    message(STATUS "  Added dummy custom target: format-cpp (clang-format not found or no files)")
+endif()
+
+# 4. Define format-rust Custom Target
+# CARGO_EXECUTABLE is defined in the RUST INTEGRATION section
+if(CARGO_EXECUTABLE)
+    # Determine the correct working directory for cargo fmt --all
+    # If there's a top-level Cargo.toml for a workspace, it should be CMAKE_SOURCE_DIR.
+    # If formatting is per-crate, then it's more complex.
+    # The Makefile.am ran it from $(srcdir) which is CMAKE_SOURCE_DIR.
+    set(CARGO_FMT_WORKING_DIR ${CMAKE_SOURCE_DIR})
+    if(EXISTS "${CMAKE_SOURCE_DIR}/src/rust/Cargo.toml") # Check if main rust crate has its own Cargo.toml
+        # If src/rust/Cargo.toml is the main manifest for the 'stellar-core' package,
+        # and it's part of a workspace defined at CMAKE_SOURCE_DIR/Cargo.toml,
+        # then CMAKE_SOURCE_DIR is likely correct for `cargo fmt --all`.
+        # If it's not part of a workspace, --manifest-path might be needed for src/rust/Cargo.toml
+        # For now, assume CMAKE_SOURCE_DIR is correct for workspace-level formatting.
+    endif()
+
+    add_custom_target(format-rust
+        COMMAND ${CARGO_EXECUTABLE} fmt --all
+        WORKING_DIRECTORY ${CARGO_FMT_WORKING_DIR} # Usually workspace root
+        COMMENT "Formatting Rust files with ${CARGO_EXECUTABLE} fmt --all..."
+    )
+    message(STATUS "  Added custom target: format-rust (working dir: ${CARGO_FMT_WORKING_DIR})")
+else()
+    add_custom_target(format-rust
+        COMMENT "cargo not found. Skipping Rust formatting."
+    )
+    message(STATUS "  Added dummy custom target: format-rust (cargo not found)")
+endif()
+
+# 5. Define Main format Target
+add_custom_target(format COMMENT "Formatting all C++ and Rust source files...")
+if(TARGET format-cpp)
+    add_dependencies(format format-cpp)
+endif()
+if(TARGET format-rust)
+    add_dependencies(format format-rust)
+endif()
+message(STATUS "  Added main custom target: format (depends on format-cpp, format-rust)")
+
+message(STATUS "Formatting target configuration complete.")
+
+# INSTALLATION
+message(STATUS "Configuring installation rules...")
+
+# Install stellar-core executable
+if(TARGET stellar-core)
+    install(TARGETS stellar-core
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    message(STATUS "  Added install rule for stellar-core executable to ${CMAKE_INSTALL_BINDIR}")
+else()
+    message(WARNING "  stellar-core target not found. Cannot add installation rule.")
+endif()
+
+# Install Tracy tools (if enabled and their alias targets exist)
+if(ENABLE_TRACY_GUI)
+    if(TARGET tracy-gui) # This is the ALIAS target we created
+        install(TARGETS tracy-gui
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            # RENAME stellar-core-tracy-gui # The alias already has the desired installed name if it's stellar-core-tracy-gui
+            # If the alias is just 'tracy-gui', then RENAME might be useful. The prompt used stellar-core-tracy-gui for the alias.
+            # Let's ensure the installed name is simply 'tracy-gui' as is conventional for tools.
+            # The alias target is named 'tracy-gui'. The install rule will install it as 'tracy-gui'.
+        )
+        message(STATUS "  Added install rule for tracy-gui to ${CMAKE_INSTALL_BINDIR}")
+    else()
+        message(WARNING "  ENABLE_TRACY_GUI is ON, but target 'tracy-gui' not found. Cannot add installation rule. Check Tracy build configuration and target names.")
+    endif()
+endif()
+
+if(ENABLE_TRACY_CAPTURE)
+    if(TARGET stellar-core-tracy-capture) # This is the ALIAS target
+        install(TARGETS stellar-core-tracy-capture
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            RENAME tracy-capture # Install as 'tracy-capture'
+        )
+        message(STATUS "  Added install rule for stellar-core-tracy-capture (as tracy-capture) to ${CMAKE_INSTALL_BINDIR}")
+    else()
+        message(WARNING "  ENABLE_TRACY_CAPTURE is ON, but target 'stellar-core-tracy-capture' not found. Cannot add installation rule.")
+    endif()
+endif()
+
+if(ENABLE_TRACY_CSVEXPORT)
+    if(TARGET stellar-core-tracy-csvexport) # This is the ALIAS target
+        install(TARGETS stellar-core-tracy-csvexport
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            RENAME tracy-csvexport # Install as 'tracy-csvexport'
+        )
+        message(STATUS "  Added install rule for stellar-core-tracy-csvexport (as tracy-csvexport) to ${CMAKE_INSTALL_BINDIR}")
+    else()
+        message(WARNING "  ENABLE_TRACY_CSVEXPORT is ON, but target 'stellar-core-tracy-csvexport' not found. Cannot add installation rule.")
+    endif()
+endif()
+
+# Install Documentation Files
+set(DOC_FILES_EXAMPLES
+    "${CMAKE_SOURCE_DIR}/docs/stellar-core_example.cfg"
+    "${CMAKE_SOURCE_DIR}/docs/stellar-core_standalone.cfg"
+    "${CMAKE_SOURCE_DIR}/docs/stellar-core_testnet.cfg"
+)
+set(DOC_FILES_SOFTWARE
+    "${CMAKE_SOURCE_DIR}/docs/software/admin.md"
+    "${CMAKE_SOURCE_DIR}/docs/software/commands.md"
+)
+
+set(DOC_INSTALL_EXAMPLES_DIR "${CMAKE_INSTALL_DATADIR}/stellar-core/examples")
+set(DOC_INSTALL_SOFTWARE_DIR "${CMAKE_INSTALL_DATADIR}/stellar-core/doc/software")
+
+# Check if files exist before trying to install
+set(MISSING_DOC_FILES "")
+foreach(doc_file ${DOC_FILES_EXAMPLES} ${DOC_FILES_SOFTWARE})
+    if(NOT EXISTS ${doc_file})
+        list(APPEND MISSING_DOC_FILES ${doc_file})
     endif()
 endforeach()
 
-message(STATUS "    Collected regular C++ sources: ${STELLAR_CORE_MAIN_SOURCES}")
-
-# Add generated sources
-# GENERATED_CORE_SOURCES includes XDRFilesSha256.cpp, Flex/Bison outputs, RustBridge.cpp, and StellarCoreVersion.cpp
-if(GENERATED_CORE_SOURCES)
-    list(APPEND STELLAR_CORE_MAIN_SOURCES ${GENERATED_CORE_SOURCES})
-    message(STATUS "    Added generated C++ sources: ${GENERATED_CORE_SOURCES}")
-else()
-    message(WARNING "    GENERATED_CORE_SOURCES is empty. This might be an error if generated sources are expected.")
+if(MISSING_DOC_FILES)
+    message(WARNING "  The following documentation files are missing and will not be installed: ${MISSING_DOC_FILES}")
 endif()
 
-if(NOT STELLAR_CORE_MAIN_SOURCES)
-    message(FATAL_ERROR "No source files found for the stellar-core executable. Check globbing patterns and generated source lists.")
-endif()
-message(STATUS "  Total C++ sources for stellar-core: ${STELLAR_CORE_MAIN_SOURCES}")
-
-# 3. Define stellar-core Executable Target
-add_executable(stellar-core ${STELLAR_CORE_MAIN_SOURCES})
-message(STATUS "  Defined executable target: stellar-core")
-
-# 4. Set Include Directories for stellar-core
-message(STATUS "  Setting include directories for stellar-core...")
-target_include_directories(stellar-core PUBLIC
-    ${CMAKE_BINARY_DIR} # For config.h, and other generated headers in CMAKE_BINARY_DIR/generated/*
-    ${CMAKE_SOURCE_DIR}/src # For all source headers
+# Install example config files
+install(FILES ${DOC_FILES_EXAMPLES}
+    DESTINATION ${DOC_INSTALL_EXAMPLES_DIR}
+    ERROR_ON_MISSING_FILE # CMake will error if any file in the list is missing at generation time
 )
-# Specific include directories for dependencies (some might be via INTERFACE libraries)
-# XDRPP_INCLUDE_DIRS and LIBSODIUM_INCLUDE_DIRS were variables for ExternalProject.
-# If using interface libraries (e.g., 'xdrpp', 'libsodium'), linking to them handles includes.
-# The XDR_GENERATED_INCLUDE_DIR, XDRQUERY_GENERATED_DIR, RUST_BRIDGE_GENERATED_DIR are already added globally.
-# However, explicit target_include_directories can be clearer.
+message(STATUS "  Added install rule for example config files to ${DOC_INSTALL_EXAMPLES_DIR}")
 
-# From previous setups:
-# xdrpp (target) provides includes if IMPORTED or from add_subdirectory
-# libsodium (target) provides includes if IMPORTED or from add_subdirectory
-# asio_interface (target)
-# soci_interface (target)
-# medida_interface (target)
-# spdlog_interface (target, if USE_SPDLOG)
-# sqlite3_lib (target) - its include dir was set to PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib/sqlite
-# cereal::cereal (target from add_subdirectory)
-# fmt::fmt (target from add_subdirectory)
-# TracyClient (target from add_subdirectory if ENABLE_TRACY)
-
-# Global includes already added:
-# ${CMAKE_BINARY_DIR} (for config.h)
-# ${XDR_GENERATED_INCLUDE_DIR}
-# ${XDRQUERY_GENERATED_DIR}
-# ${RUST_BRIDGE_GENERATED_DIR}
-# ${STELLAR_CORE_VERSION_CPP_DIR}
-
-# Some libraries like asio_interface, soci_interface, etc., are interface libraries
-# that should propagate their include directories when linked.
-# For those set up with specific include variables (like XDRPP_INCLUDE_DIRS, LIBSODIUM_INCLUDE_DIRS
-# when pkg-config was used but no target created, or for internal builds), add them here.
-if(XDRPP_INCLUDE_DIRS AND NOT TARGET xdrpp) # If xdrpp target exists, it should handle this.
-    target_include_directories(stellar-core PUBLIC ${XDRPP_INCLUDE_DIRS})
-endif()
-if(LIBSODIUM_INCLUDE_DIRS AND NOT TARGET libsodium) # If libsodium target exists, it should handle this.
-    target_include_directories(stellar-core PUBLIC ${LIBSODIUM_INCLUDE_DIRS})
-endif()
-if(POSTGRESQL_FOUND AND POSTGRESQL_INCLUDE_DIRS) # From find_package(PostgreSQL) or pkg-config
-    target_include_directories(stellar-core PUBLIC ${POSTGRESQL_INCLUDE_DIRS})
-endif()
-
-# 5. Link stellar-core Against Libraries
-message(STATUS "  Linking stellar-core against libraries...")
-target_link_libraries(stellar-core PRIVATE
-    lib3rdparty_a       # Contains util, json, and spdlog sources (if USE_SPDLOG)
-    soci_interface      # Links to soci_lib (core + postgresql backend if enabled)
-    medida_interface    # Links to medida_lib (if internal) or system libmedida
-    xdrpp               # Interface for system or internal xdrpp
-    libsodium           # Interface for system or internal libsodium
-    rust_stellar_core_lib # Main Rust library
-    fmt::fmt            # From add_subdirectory
-    cereal::cereal      # From add_subdirectory
-    Threads::Threads    # For pthread
+# Install software documentation files
+install(FILES ${DOC_FILES_SOFTWARE}
+    DESTINATION ${DOC_INSTALL_SOFTWARE_DIR}
+    ERROR_ON_MISSING_FILE
 )
+message(STATUS "  Added install rule for software documentation files to ${DOC_INSTALL_SOFTWARE_DIR}")
 
-# Conditional linking for Tracy
-if(ENABLE_TRACY AND TARGET TracyClient) # TracyClient is the target name from Tracy's CMakeLists
-    target_link_libraries(stellar-core PRIVATE TracyClient)
-    message(STATUS "    Linked against TracyClient.")
-endif()
-
-# Conditional linking for PostgreSQL (if soci_interface doesn't bring it transitively via PostgreSQL::libpq)
-# PostgreSQL::libpq is already linked to soci_lib if postgres is enabled for SOCI.
-# If any other part of stellar-core needs direct pg headers/libs, this might be needed,
-# but usually, it's encapsulated by the component using it (like SOCI).
-# if(HAVE_POSTGRES AND TARGET PostgreSQL::libpq)
-# target_link_libraries(stellar-core PRIVATE PostgreSQL::libpq)
-# endif()
-
-# Link against dl library (for dlfcn.h, dlopen, etc.)
-# Check if the dl library is needed and find it.
-find_library(DL_LIBRARY dl)
-if(DL_LIBRARY)
-    target_link_libraries(stellar-core PRIVATE ${DL_LIBRARY})
-    message(STATUS "    Linked against dl library: ${DL_LIBRARY}")
-else()
-    message(WARNING "    dl library not found. Dynamic loading features might be affected.")
-endif()
-
-# Link against PLATFORM_SPECIFIC_LINK_LIBS (for filesystem, libunwind)
-if(PLATFORM_SPECIFIC_LINK_LIBS)
-    target_link_libraries(stellar-core PRIVATE ${PLATFORM_SPECIFIC_LINK_LIBS})
-    message(STATUS "    Linked against platform specific libraries: ${PLATFORM_SPECIFIC_LINK_LIBS}")
-endif()
-
-message(STATUS "stellar-core executable configuration complete.")
+message(STATUS "Installation rules configuration complete.")
