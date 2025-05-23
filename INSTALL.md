@@ -60,16 +60,19 @@ To install Postgresql, follow instructions from the [Postgresql download page](h
 - c++ toolchain and headers that supports c++17
     - `clang` >= 12.0
     - `g++` >= 10.0
+- `cmake` (version 3.16 or higher) - Required for the CMake build system.
+- A C++ build tool supported by CMake, such as `ninja` (recommended for speed) or `make`.
 - `pkg-config`
 - `bison` and `flex`
-- `libpq-dev` unless you `./configure --disable-postgres` in the build step below.
+- `libpq-dev` unless you disable PostgreSQL support in the build step below.
 - 64-bit system
-- `clang-format-12` (for `make format` to work)
+- `clang-format-12` (for `make format` or `ninja format-cpp` to work)
 - `sed` and `perl`
 - `libunwind-dev`
 - Rust toolchain (see [Installing Rust](#installing-rust) subsection)
   - `cargo` >= 1.74
   - `rust` >= 1.74
+- **Note for Autotools (Legacy) Builds:** `autoconf`, `automake`, and `libtool` are also required if building with the legacy autotools system.
 
 ### Installing Rust
 
@@ -104,7 +107,7 @@ After installing packages, head to [building with clang and libc++](#building-wi
 
 #### Installing packages
     # common packages
-    sudo apt-get install git build-essential pkg-config autoconf automake libtool bison flex libpq-dev libunwind-dev parallel sed perl
+    sudo apt-get install git build-essential pkg-config cmake ninja-build autoconf automake libtool bison flex libpq-dev libunwind-dev parallel sed perl
     # if using clang
     sudo apt-get install clang-12
     # clang with libstdc++
@@ -183,7 +186,9 @@ clang-format --version
 ### Windows
 See [INSTALL-Windows.md](INSTALL-Windows.md)
 
-## Basic Installation
+## Building with Autotools (Legacy)
+
+*Note: CMake is now the recommended build system. See the 'Building with CMake (Recommended)' section below.*
 
 - `git clone https://github.com/stellar/stellar-core.git`
 - `cd stellar-core`
@@ -194,6 +199,110 @@ See [INSTALL-Windows.md](INSTALL-Windows.md)
 - Type `make` or `make -j<N>` (where `<N>` is the number of parallel builds, a number less than the number of CPU cores available, e.g. `make -j3`)
 - Type `make check` to run tests.
 - Type `make install` to install.
+
+## Building with CMake (Recommended)
+
+CMake is the recommended build system for `stellar-core`.
+
+**1. Prerequisites:**
+
+Ensure you have all the necessary tools and libraries listed in the "Build Dependencies" section, including:
+*   A C++17 compliant compiler (Clang >= 12 or GCC >= 10).
+*   CMake (version 3.16 or newer).
+*   Ninja (recommended) or Make.
+*   `pkg-config`
+*   `bison` and `flex`
+*   `libpq-dev` (unless PostgreSQL support is disabled).
+*   `libunwind-dev`
+*   Rust toolchain (Cargo >= 1.74, Rust >= 1.74).
+
+**2. Clone Repository and Submodules:**
+
+If you haven't already, clone the repository and initialize submodules:
+```bash
+git clone https://github.com/stellar/stellar-core.git
+cd stellar-core
+git submodule update --init --recursive
+```
+
+**3. Configure the Build (CMake):**
+
+Create a build directory and run CMake to configure the project. It's recommended to build outside the source directory.
+```bash
+cmake -S . -B build -G Ninja [OPTIONS]
+```
+*   `-S .`: Specifies the source directory (current directory).
+*   `-B build`: Specifies the build directory (a new directory named `build`).
+*   `-G Ninja`: Specifies Ninja as the build system generator. You can use `-G "Unix Makefiles"` for Make.
+*   `[OPTIONS]`: CMake options to customize the build (see below).
+
+**Common CMake Options:**
+
+You can pass options to CMake using the `-D<OPTION_NAME>=<VALUE>` syntax. Here are some common options corresponding to the old `./configure` flags:
+
+*   `-DCMAKE_BUILD_TYPE=Release|Debug|RelWithDebInfo`: Standard CMake build types. `Release` for optimized builds, `Debug` for debugging symbols and no optimizations. Defaults typically to `Debug` or none if not set.
+*   `-DCMAKE_C_COMPILER=clang|gcc`: Specify C compiler.
+*   `-DCMAKE_CXX_COMPILER=clang++|g++`: Specify C++ compiler.
+*   `-DDISABLE_POSTGRES=ON|OFF`: Disable/Enable PostgreSQL support (Default: `OFF`).
+*   `-DBUILD_TESTS=ON|OFF`: Build the test suite (Default: `ON`). Executable will include test code.
+*   `-DENABLE_ASAN=ON|OFF`: Enable AddressSanitizer (Default: `OFF`).
+*   `-DENABLE_TSAN=ON|OFF`: Enable ThreadSanitizer (Default: `OFF`).
+*   `-DENABLE_MEMCHECK=ON|OFF`: Enable MemorySanitizer (Default: `OFF`).
+*   `-DENABLE_UNDEFINEDCHECK=ON|OFF`: Enable UndefinedBehaviorSanitizer (Default: `OFF`).
+*   `-DENABLE_EXTRA_CHECKS=ON|OFF`: Enable additional debugging checks (Default: `OFF`).
+*   `-DENABLE_TRACY=ON|OFF`: Enable Tracy client integration (Default: `OFF`).
+*   `-DENABLE_TRACY_GUI=ON|OFF`: Build the Tracy GUI tool (Default: `OFF`). (Requires additional GUI dependencies like Freetype, GLFW, etc.)
+*   `-DENABLE_TRACY_CAPTURE=ON|OFF`: Build the Tracy capture tool (Default: `OFF`).
+*   `-DENABLE_TRACY_CSVEXPORT=ON|OFF`: Build the Tracy csvexport tool (Default: `OFF`).
+*   `-DENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION=ON|OFF`: Enable next protocol version features (UNSAFE FOR PRODUCTION) (Default: `OFF`).
+*   `-DUSE_SPDLOG=ON|OFF`: Use bundled spdlog library (Default: `ON`).
+*   `-DDISABLE_LIBUNWIND=ON|OFF`: Disable libunwind for backtraces (Default: `OFF`).
+*   `-DFORCE_INTERNAL_LIBSODIUM=ON|OFF`: Force build of internal libsodium instead of system version (Default: `OFF`).
+*   `-DFORCE_INTERNAL_XDRPP=ON|OFF`: Force build of internal xdrpp instead of system version (Default: `OFF`).
+
+Example: Configure a release build with tests disabled:
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+```
+
+**4. Compile the Code:**
+
+After configuration, run the build command:
+```bash
+cmake --build build --parallel <N>
+```
+*   `<N>`: Number of parallel build jobs (e.g., number of CPU cores).
+
+The main `stellar-core` executable will be located at `build/src/stellar-core`. Optional Tracy tools (if enabled and built) will also be in the `build/` directory (e.g. `build/tracy-gui`, `build/tracy-capture`, `build/tracy-csvexport`).
+
+**5. Run Tests (if enabled):**
+
+If tests were built (`BUILD_TESTS=ON`, default), you can run them from the build directory:
+```bash
+cd build
+ctest
+```
+Or, to run a specific test:
+```bash
+ctest -R stellar-core-selftest-pg
+```
+To run with memory checking (if Valgrind is available and CTest is configured for it):
+```bash
+ctest -T memcheck
+```
+
+**6. Install (Optional):**
+
+To install the `stellar-core` executable and related files to a specified location:
+First, configure with an install prefix:
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local/stellar
+```
+Then, run the install command:
+```bash
+cmake --install build
+```
+The executable will be installed to `/usr/local/stellar/bin/stellar-core`. Documentation and example config files will also be installed under `/usr/local/stellar/share/stellar-core/`.
 
 ## Building with clang and libc++
 
