@@ -2,22 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 
 message(STATUS "Processing lib/CMakeLists.txt...")
 
-# --- sqlite3_lib ---
-message(STATUS "  Configuring SQLite library (sqlite3_lib) from lib/CMakeLists.txt...")
-add_library(sqlite3_lib STATIC
-    sqlite/sqlite3.c
-    sqlite/carray.c
-)
-target_include_directories(sqlite3_lib PUBLIC
-    # PUBLIC because targets linking sqlite3_lib will need to find sqlite3.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/sqlite
-)
-target_compile_definitions(sqlite3_lib PRIVATE
-    SQLITE_CORE
-    SQLITE_OMIT_LOAD_EXTENSION=1
-)
-message(STATUS "  Created sqlite3_lib static library target from lib/CMakeLists.txt.")
-
 # --- LibASIO ---
 message(STATUS "  Configuring Asio from lib/CMakeLists.txt (Revised)...")
 set(ASIO_CPP_FILE_LIB "${CMAKE_CURRENT_SOURCE_DIR}/asio.cpp") # Path relative to lib/
@@ -115,11 +99,17 @@ if(USING_INTERNAL_LIBMEDIDA)
     
     set(MEDIDA_INTERNAL_SOURCES_LIB "")
     file(GLOB MEDIDA_CORE_SOURCES_CPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/libmedida/src/medida/*.cpp")
-    if(MEDIDA_CORE_SOURCES_CPP_LIB) list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_CORE_SOURCES_CPP_LIB}) endif()
+    if(MEDIDA_CORE_SOURCES_CPP_LIB)
+        list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_CORE_SOURCES_CPP_LIB})
+    endif()
     file(GLOB MEDIDA_REPORTING_SOURCES_CPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/libmedida/src/medida/reporting/*.cpp")
-    if(MEDIDA_REPORTING_SOURCES_CPP_LIB) list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_REPORTING_SOURCES_CPP_LIB}) endif()
+    if(MEDIDA_REPORTING_SOURCES_CPP_LIB)
+        list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_REPORTING_SOURCES_CPP_LIB})
+    endif()
     file(GLOB MEDIDA_STATS_SOURCES_CPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.cpp") # Corrected path
-    if(MEDIDA_STATS_SOURCES_CPP_LIB) list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_STATS_SOURCES_CPP_LIB}) endif()
+    if(MEDIDA_STATS_SOURCES_CPP_LIB)
+        list(APPEND MEDIDA_INTERNAL_SOURCES_LIB ${MEDIDA_STATS_SOURCES_CPP_LIB})
+    endif()
 
     if(MEDIDA_INTERNAL_SOURCES_LIB)
         target_sources(medida_lib PRIVATE ${MEDIDA_INTERNAL_SOURCES_LIB})
@@ -138,10 +128,14 @@ message(STATUS "  Configuring lib3rdparty_a from lib/CMakeLists.txt...")
 set(LIB3RDPARTY_SOURCES_LIB "")
 
 file(GLOB UTIL_SOURCES_CPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/util/*.cpp")
-if(UTIL_SOURCES_CPP_LIB) list(APPEND LIB3RDPARTY_SOURCES_LIB ${UTIL_SOURCES_CPP_LIB}) endif()
+if(UTIL_SOURCES_CPP_LIB)
+    list(APPEND LIB3RDPARTY_SOURCES_LIB ${UTIL_SOURCES_CPP_LIB})
+endif()
 
 set(JSON_SOURCES_CPP_LIB "${CMAKE_CURRENT_SOURCE_DIR}/json/jsoncpp.cpp")
-if(EXISTS ${JSON_SOURCES_CPP_LIB}) list(APPEND LIB3RDPARTY_SOURCES_LIB ${JSON_SOURCES_CPP_LIB}) endif()
+if(EXISTS ${JSON_SOURCES_CPP_LIB})
+    list(APPEND LIB3RDPARTY_SOURCES_LIB ${JSON_SOURCES_CPP_LIB})
+endif()
 
 # Conditional sources for spdlog (if USE_SPDLOG and not built as separate target by add_subdirectory(lib/spdlog))
 # This assumes spdlog_interface target is defined in root CMakeLists.txt

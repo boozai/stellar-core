@@ -10,9 +10,13 @@ set(XDR_GENERATED_HEADERS_SRC "")  # XDR headers specifically, _SRC suffix
 message(STATUS "  Configuring XDR code generation (from src/CMakeLists.txt)...")
 set(XDR_FILES_IN_SRC "") # Local variable for XDR source files within src/
 file(GLOB XDR_PROTOCOL_CURR_FILES_IN_SRC_CTX "${CMAKE_CURRENT_SOURCE_DIR}/protocol-curr/xdr/*.x")
-if(XDR_PROTOCOL_CURR_FILES_IN_SRC_CTX) list(APPEND XDR_FILES_IN_SRC ${XDR_PROTOCOL_CURR_FILES_IN_SRC_CTX}) endif()
+if(XDR_PROTOCOL_CURR_FILES_IN_SRC_CTX)
+    list(APPEND XDR_FILES_IN_SRC ${XDR_PROTOCOL_CURR_FILES_IN_SRC_CTX})
+endif()
 file(GLOB XDR_PROTOCOL_NEXT_FILES_IN_SRC_CTX "${CMAKE_CURRENT_SOURCE_DIR}/protocol-next/xdr/*.x")
-if(XDR_PROTOCOL_NEXT_FILES_IN_SRC_CTX) list(APPEND XDR_FILES_IN_SRC ${XDR_PROTOCOL_NEXT_FILES_IN_SRC_CTX}) endif()
+if(XDR_PROTOCOL_NEXT_FILES_IN_SRC_CTX)
+    list(APPEND XDR_FILES_IN_SRC ${XDR_PROTOCOL_NEXT_FILES_IN_SRC_CTX})
+endif()
 
 if(NOT XDR_FILES_IN_SRC)
     message(WARNING "    No .x files found in src/protocol-curr/xdr/ or src/protocol-next/xdr/ (from src/CMakeLists.txt).")
@@ -55,7 +59,11 @@ endforeach()
 # XDRFilesSha256.cpp Generation
 set(XDR_SHA256_CPP_FILE_OUT "${CMAKE_BINARY_DIR}/generated/XDRFilesSha256.cpp") # Consistent output path
 set(HASH_XDRS_PROTOCOL_ARG_CTX "")
-if(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION) set(HASH_XDRS_PROTOCOL_ARG_CTX "protocol-next") else() set(HASH_XDRS_PROTOCOL_ARG_CTX "protocol-curr") endif()
+if(ENABLE_NEXT_PROTOCOL_VERSION_UNSAFE_FOR_PRODUCTION)
+    set(HASH_XDRS_PROTOCOL_ARG_CTX "protocol-next")
+else()
+    set(HASH_XDRS_PROTOCOL_ARG_CTX "protocol-curr")
+endif()
 set(HASH_XDRS_SCRIPT_CTX "${CMAKE_SOURCE_DIR}/hash-xdrs.sh")
 
 if(XDR_FILES_IN_SRC)
@@ -99,8 +107,11 @@ set(STELLAR_CORE_VERSION_CPP_IN_CTX "${CMAKE_CURRENT_SOURCE_DIR}/main/StellarCor
 set(STELLAR_CORE_VERSION_CPP_OUT_CTX "${STELLAR_CORE_VERSION_CPP_DIR}/StellarCoreVersion.cpp")
 
 set(VERSION_COMMAND_SCRIPT_CTX "")
-if(GIT_FOUND) set(VERSION_COMMAND_SCRIPT_CTX "vers=$$(git describe --always --dirty --tags 2>/dev/null); if [ -z \"$$vers\" ]; then vers=\"${PACKAGE_NAME} ${PACKAGE_VERSION}\"; fi; echo \"$$vers\"")
-else() set(VERSION_COMMAND_SCRIPT_CTX "echo \"${PACKAGE_NAME} ${PACKAGE_VERSION}\"") endif()
+if(GIT_FOUND)
+    set(VERSION_COMMAND_SCRIPT_CTX "vers=$$(git describe --always --dirty --tags 2>/dev/null); if [ -z \"$$vers\" ]; then vers=\"${PACKAGE_NAME} ${PACKAGE_VERSION}\"; fi; echo \"$$vers\"")
+else()
+    set(VERSION_COMMAND_SCRIPT_CTX "echo \"${PACKAGE_NAME} ${PACKAGE_VERSION}\"")
+endif()
 set(STELLAR_CORE_VERSION_CPP_TMP_CTX "${STELLAR_CORE_VERSION_CPP_OUT_CTX}.tmp")
 
 add_custom_command(
@@ -153,9 +164,14 @@ set(EXCLUDE_PATTERNS_CTX
 foreach(file_ctx ${ALL_SRC_CPP_FILES_CTX})
     set(exclude_file_ctx FALSE)
     foreach(pattern_ctx ${EXCLUDE_PATTERNS_CTX})
-        if(file_ctx MATCHES "^${pattern_ctx}") set(exclude_file_ctx TRUE) break() endif()
+        if(file_ctx MATCHES "^${pattern_ctx}")
+            set(exclude_file_ctx TRUE)
+            break()
+        endif()
     endforeach()
-    if(NOT exclude_file_ctx) list(APPEND STELLAR_CORE_MAIN_SOURCES_CTX ${file_ctx}) endif()
+    if(NOT exclude_file_ctx)
+        list(APPEND STELLAR_CORE_MAIN_SOURCES_CTX ${file_ctx})
+    endif()
 endforeach()
 
 list(APPEND STELLAR_CORE_MAIN_SOURCES_CTX ${GENERATED_CORE_SOURCES_SRC})
@@ -195,9 +211,15 @@ endif()
 # Include directories from dependencies defined in root or lib/CMakeLists.txt
 # These are typically handled by linking INTERFACE libraries.
 # Explicit additions if variables are directly used (less common with modern CMake):
-if(XDRPP_INCLUDE_DIRS AND NOT TARGET xdrpp) target_include_directories(stellar-core PUBLIC ${XDRPP_INCLUDE_DIRS}) endif()
-if(LIBSODIUM_INCLUDE_DIRS AND NOT TARGET libsodium) target_include_directories(stellar-core PUBLIC ${LIBSODIUM_INCLUDE_DIRS}) endif()
-if(POSTGRESQL_FOUND AND POSTGRESQL_INCLUDE_DIRS) target_include_directories(stellar-core PUBLIC ${POSTGRESQL_INCLUDE_DIRS}) endif()
+if(XDRPP_INCLUDE_DIRS AND NOT TARGET xdrpp)
+    target_include_directories(stellar-core PUBLIC ${XDRPP_INCLUDE_DIRS})
+endif()
+if(LIBSODIUM_INCLUDE_DIRS AND NOT TARGET libsodium)
+    target_include_directories(stellar-core PUBLIC ${LIBSODIUM_INCLUDE_DIRS})
+endif()
+if(POSTGRESQL_FOUND AND POSTGRESQL_INCLUDE_DIRS)
+    target_include_directories(stellar-core PUBLIC ${POSTGRESQL_INCLUDE_DIRS})
+endif()
 
 target_link_libraries(stellar-core PRIVATE
     lib3rdparty_a       # Defined in lib/CMakeLists.txt
@@ -210,9 +232,15 @@ target_link_libraries(stellar-core PRIVATE
     cereal::cereal      # Defined in root (lib/cereal)
     Threads::Threads
 )
-if(ENABLE_TRACY AND TARGET TracyClient) target_link_libraries(stellar-core PRIVATE TracyClient) endif()
-if(DL_LIBRARY) target_link_libraries(stellar-core PRIVATE ${DL_LIBRARY}) endif()
-if(PLATFORM_SPECIFIC_LINK_LIBS) target_link_libraries(stellar-core PRIVATE ${PLATFORM_SPECIFIC_LINK_LIBS}) endif()
+if(ENABLE_TRACY AND TARGET TracyClient)
+    target_link_libraries(stellar-core PRIVATE TracyClient)
+endif()
+if(DL_LIBRARY)
+    target_link_libraries(stellar-core PRIVATE ${DL_LIBRARY})
+endif()
+if(PLATFORM_SPECIFIC_LINK_LIBS)
+    target_link_libraries(stellar-core PRIVATE ${PLATFORM_SPECIFIC_LINK_LIBS})
+endif()
 
 message(STATUS "  stellar-core executable configured (from src/CMakeLists.txt).")
 message(STATUS "Finished processing src/CMakeLists.txt.")

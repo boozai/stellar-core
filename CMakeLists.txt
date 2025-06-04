@@ -42,6 +42,13 @@ set(PROJECT_WARNING_FLAGS
     -Werror=unused-result
 )
 
+# Adjust warning flags based on compiler
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    list(REMOVE_ITEM PROJECT_WARNING_FLAGS -Qunused-arguments)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # clang understands all default flags
+endif()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
 
@@ -140,8 +147,13 @@ endif()
 if(SDF_PREFS)
     # Append to the existing list of warning flags.
     # PROJECT_WARNING_FLAGS is defined near the top of the file.
-    list(APPEND PROJECT_WARNING_FLAGS "-fcolor-diagnostics")
-    message(STATUS "SDF Preferences enabled: Added -fcolor-diagnostics to PROJECT_WARNING_FLAGS.")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        list(APPEND PROJECT_WARNING_FLAGS "-fdiagnostics-color=always")
+        message(STATUS "SDF Preferences enabled: Added -fdiagnostics-color=always to PROJECT_WARNING_FLAGS for GCC.")
+    else()
+        list(APPEND PROJECT_WARNING_FLAGS "-fcolor-diagnostics")
+        message(STATUS "SDF Preferences enabled: Added -fcolor-diagnostics to PROJECT_WARNING_FLAGS.")
+    endif()
 endif()
 
 # APPLY WARNING FLAGS
@@ -1019,13 +1031,27 @@ foreach(proto ${ALL_SOROBAN_PROTOCOLS})
 
     set(ENV_VARS "")
     list(APPEND ENV_VARS "RUST_BACKTRACE=1")
-    if(CMAKE_C_COMPILER)   list(APPEND ENV_VARS "CC=${CMAKE_C_COMPILER}") endif()
-    if(CMAKE_CXX_COMPILER) list(APPEND ENV_VARS "CXX=${CMAKE_CXX_COMPILER}") endif()
-    if(CMAKE_LINKER)       list(APPEND ENV_VARS "LD=${CMAKE_LINKER}") endif()
-    if(CMAKE_C_FLAGS)      list(APPEND ENV_VARS "CFLAGS=${CMAKE_C_FLAGS}") endif()
-    if(CMAKE_CXX_FLAGS)    list(APPEND ENV_VARS "CXXFLAGS=${CMAKE_CXX_FLAGS}") endif()
-    if(CMAKE_EXE_LINKER_FLAGS) list(APPEND ENV_VARS "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}") endif() # Or CMAKE_SHARED_LINKER_FLAGS
-    if(CXXSTDLIB)          list(APPEND ENV_VARS "CXXSTDLIB=${CXXSTDLIB}") endif()
+    if(CMAKE_C_COMPILER)
+        list(APPEND ENV_VARS "CC=${CMAKE_C_COMPILER}")
+    endif()
+    if(CMAKE_CXX_COMPILER)
+        list(APPEND ENV_VARS "CXX=${CMAKE_CXX_COMPILER}")
+    endif()
+    if(CMAKE_LINKER)
+        list(APPEND ENV_VARS "LD=${CMAKE_LINKER}")
+    endif()
+    if(CMAKE_C_FLAGS)
+        list(APPEND ENV_VARS "CFLAGS=${CMAKE_C_FLAGS}")
+    endif()
+    if(CMAKE_CXX_FLAGS)
+        list(APPEND ENV_VARS "CXXFLAGS=${CMAKE_CXX_FLAGS}")
+    endif()
+    if(CMAKE_EXE_LINKER_FLAGS)
+        list(APPEND ENV_VARS "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}")
+    endif() # Or CMAKE_SHARED_LINKER_FLAGS
+    if(CXXSTDLIB)
+        list(APPEND ENV_VARS "CXXSTDLIB=${CXXSTDLIB}")
+    endif()
     list(APPEND ENV_VARS "CARGO_NET_GIT_FETCH_WITH_CLI=true")
     list(APPEND ENV_VARS "CARGO_TARGET_DIR=${RUST_TARGET_DIR}") # Ensure cargo uses our specified target dir
 
@@ -1148,13 +1174,27 @@ list(REMOVE_DUPLICATES MAIN_RUST_BUILD_DEPENDS)
 # Soroban used -Cmetadata=${proto}, main library doesn't need that.
 set(MAIN_RUST_ENV_VARS "")
 list(APPEND MAIN_RUST_ENV_VARS "RUST_BACKTRACE=1")
-if(CMAKE_C_COMPILER)   list(APPEND MAIN_RUST_ENV_VARS "CC=${CMAKE_C_COMPILER}") endif()
-if(CMAKE_CXX_COMPILER) list(APPEND MAIN_RUST_ENV_VARS "CXX=${CMAKE_CXX_COMPILER}") endif()
-if(CMAKE_LINKER)       list(APPEND MAIN_RUST_ENV_VARS "LD=${CMAKE_LINKER}") endif()
-if(CMAKE_C_FLAGS)      list(APPEND MAIN_RUST_ENV_VARS "CFLAGS=${CMAKE_C_FLAGS}") endif()
-if(CMAKE_CXX_FLAGS)    list(APPEND MAIN_RUST_ENV_VARS "CXXFLAGS=${CMAKE_CXX_FLAGS}") endif()
-if(CMAKE_EXE_LINKER_FLAGS) list(APPEND MAIN_RUST_ENV_VARS "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}") endif()
-if(CXXSTDLIB)          list(APPEND MAIN_RUST_ENV_VARS "CXXSTDLIB=${CXXSTDLIB}") endif()
+if(CMAKE_C_COMPILER)
+    list(APPEND MAIN_RUST_ENV_VARS "CC=${CMAKE_C_COMPILER}")
+endif()
+if(CMAKE_CXX_COMPILER)
+    list(APPEND MAIN_RUST_ENV_VARS "CXX=${CMAKE_CXX_COMPILER}")
+endif()
+if(CMAKE_LINKER)
+    list(APPEND MAIN_RUST_ENV_VARS "LD=${CMAKE_LINKER}")
+endif()
+if(CMAKE_C_FLAGS)
+    list(APPEND MAIN_RUST_ENV_VARS "CFLAGS=${CMAKE_C_FLAGS}")
+endif()
+if(CMAKE_CXX_FLAGS)
+    list(APPEND MAIN_RUST_ENV_VARS "CXXFLAGS=${CMAKE_CXX_FLAGS}")
+endif()
+if(CMAKE_EXE_LINKER_FLAGS)
+    list(APPEND MAIN_RUST_ENV_VARS "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}")
+endif()
+if(CXXSTDLIB)
+    list(APPEND MAIN_RUST_ENV_VARS "CXXSTDLIB=${CXXSTDLIB}")
+endif()
 list(APPEND MAIN_RUST_ENV_VARS "CARGO_NET_GIT_FETCH_WITH_CLI=true")
 list(APPEND MAIN_RUST_ENV_VARS "CARGO_TARGET_DIR=${RUST_TARGET_DIR}") # Ensure cargo uses our specified target dir
 if(RUSTFLAGS_ASAN_VALUE)
@@ -1543,13 +1583,19 @@ file(GLOB LIB_UTIL_FILES
     "${CMAKE_SOURCE_DIR}/lib/util/*.h"
     "${CMAKE_SOURCE_DIR}/lib/util/*.cpp"
 )
-if(LIB_UTIL_FILES) list(APPEND CPP_FILES_TO_FORMAT ${LIB_UTIL_FILES}) endif()
+if(LIB_UTIL_FILES)
+    list(APPEND CPP_FILES_TO_FORMAT ${LIB_UTIL_FILES})
+endif()
 
 set(LIB_JSON_FILES "${CMAKE_SOURCE_DIR}/lib/json/jsoncpp.cpp") # Specific file
-if(EXISTS ${LIB_JSON_FILES}) list(APPEND CPP_FILES_TO_FORMAT ${LIB_JSON_FILES}) endif()
+if(EXISTS ${LIB_JSON_FILES})
+    list(APPEND CPP_FILES_TO_FORMAT ${LIB_JSON_FILES})
+endif()
 
 set(LIB_ASIO_FILE "${CMAKE_SOURCE_DIR}/lib/asio.cpp") # Specific file
-if(EXISTS ${LIB_ASIO_FILE}) list(APPEND CPP_FILES_TO_FORMAT ${LIB_ASIO_FILE}) endif()
+if(EXISTS ${LIB_ASIO_FILE})
+    list(APPEND CPP_FILES_TO_FORMAT ${LIB_ASIO_FILE})
+endif()
 
 # Note: For SOCI and Libmedida, if we are using internal sources, they are part of lib3rdparty_a or specific targets.
 # The source files for soci_lib and medida_lib are already covered by the src/ glob if their sources are under src/ (e.g. src/lib/soci).
@@ -1559,10 +1605,14 @@ if(EXISTS ${LIB_ASIO_FILE}) list(APPEND CPP_FILES_TO_FORMAT ${LIB_ASIO_FILE}) en
 # Let's add them if they are built internally.
 if(TARGET soci_lib) # Assuming soci_lib exists if SOCI is used (internal or not, but sources are relevant if internal)
     file(GLOB SOCI_CORE_FORMAT_FILES "${CMAKE_SOURCE_DIR}/lib/soci/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/lib/soci/src/core/*.h")
-    if(SOCI_CORE_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${SOCI_CORE_FORMAT_FILES}) endif()
+    if(SOCI_CORE_FORMAT_FILES)
+        list(APPEND CPP_FILES_TO_FORMAT ${SOCI_CORE_FORMAT_FILES})
+    endif()
     if(NOT DISABLE_POSTGRES AND HAVE_POSTGRES)
         file(GLOB SOCI_PG_FORMAT_FILES "${CMAKE_SOURCE_DIR}/lib/soci/src/backends/postgresql/*.cpp" "${CMAKE_SOURCE_DIR}/lib/soci/src/backends/postgresql/*.h")
-        if(SOCI_PG_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${SOCI_PG_FORMAT_FILES}) endif()
+        if(SOCI_PG_FORMAT_FILES)
+            list(APPEND CPP_FILES_TO_FORMAT ${SOCI_PG_FORMAT_FILES})
+        endif()
     endif()
 endif()
 
@@ -1572,7 +1622,9 @@ if(USING_INTERNAL_LIBMEDIDA) # This variable was set during Libmedida configurat
         "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/reporting/*.cpp" "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/reporting/*.h"
         "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.cpp" "${CMAKE_SOURCE_DIR}/lib/libmedida/src/medida/stats/*.h"
     )
-    if(MEDIDA_FORMAT_FILES) list(APPEND CPP_FILES_TO_FORMAT ${MEDIDA_FORMAT_FILES}) endif()
+    if(MEDIDA_FORMAT_FILES)
+        list(APPEND CPP_FILES_TO_FORMAT ${MEDIDA_FORMAT_FILES})
+    endif()
 endif()
 
 if(CPP_FILES_TO_FORMAT)
@@ -1721,14 +1773,12 @@ endif()
 # Install example config files
 install(FILES ${DOC_FILES_EXAMPLES}
     DESTINATION ${DOC_INSTALL_EXAMPLES_DIR}
-    ERROR_ON_MISSING_FILE # CMake will error if any file in the list is missing at generation time
 )
 message(STATUS "  Added install rule for example config files to ${DOC_INSTALL_EXAMPLES_DIR}")
 
 # Install software documentation files
 install(FILES ${DOC_FILES_SOFTWARE}
     DESTINATION ${DOC_INSTALL_SOFTWARE_DIR}
-    ERROR_ON_MISSING_FILE
 )
 message(STATUS "  Added install rule for software documentation files to ${DOC_INSTALL_SOFTWARE_DIR}")
 
