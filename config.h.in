@@ -1,0 +1,7 @@
+/* Generated config.h.in */
+#cmakedefine HAVE_LIBUNWIND @HAVE_LIBUNWIND@
+#cmakedefine MSAN_ENABLED @MSAN_ENABLED@
+#cmakedefine AFL_LLVM_MODE @AFL_LLVM_MODE@
+#cmakedefine HAVE_POSTGRES @HAVE_POSTGRES@
+#define PACKAGE_NAME "@PACKAGE_NAME@"
+#define PACKAGE_VERSION "@PACKAGE_VERSION@"
